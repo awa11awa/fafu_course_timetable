@@ -1,5 +1,7 @@
 # fafu课程表 · Android 应用
 
+#本项目完全由deepdeek开发
+
 福建农林大学正方教务系统课表 App。Flutter 开发，蓝白纯色简约风格。
 
 产物：`../apk/fafu课程表-v1.0.7-arm64.apk`（26.5 MB，arm64，minSdk 24 / targetSdk 36）
