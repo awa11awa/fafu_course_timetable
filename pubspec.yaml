@@ -1,0 +1,40 @@
+name: fafu_kebiao
+description: 福建农林大学课程表 - 登录教务系统查看课表并设置上课提醒
+publish_to: "none"
+version: 1.2.3+13
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: any
+  html: any
+  fast_gbk: any
+  shared_preferences: any
+  intl: any
+  flutter_local_notifications: any
+  timezone: any
+  workmanager: any
+  webview_flutter: ^4.14.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: any
+  flutter_launcher_icons: any
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/app_icon.png
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: assets/icon/app_icon.png
+  adaptive_icon_background: "#1565C0"
+  adaptive_icon_foreground: assets/icon/app_icon_fg.png
