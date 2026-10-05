@@ -6,10 +6,10 @@ import '../services/startup_log.dart';
 import '../services/store.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
+import 'web_login_page.dart';
 
 class SettingsPage extends StatefulWidget {
-  final VoidCallback onLogout;
-  const SettingsPage({super.key, required this.onLogout});
+  const SettingsPage({super.key});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -17,17 +17,87 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   static const List<int> _leadOptions = [5, 10, 15, 20, 30];
-  static const List<int> _intervalOptions = [60, 180, 360, 720, 1440];
+  static const List<int> _intervalOptions = [60, 360, 720, 1440];
+  bool _syncing = false;
 
   @override
   Widget build(BuildContext context) {
-    final s = Store.schedule;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 30),
         children: [
-          _accountCard(s?.studentName ?? '', Store.studentId),
+          _section('学校同步'),
+          _card([
+            _tile(
+              icon: Icons.school_outlined,
+              title: '统一身份认证登录',
+              subtitle: _syncLabel(),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textFaint, size: 20),
+              onTap: _openWebLogin,
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.sync_outlined,
+              title: '自动同步课表',
+              subtitle: Store.hasCookie
+                  ? '课程有变动时自动更新到本机'
+                  : '需要先完成统一身份认证登录',
+              trailing: Switch(
+                value: Store.autoUpdate,
+                activeThumbColor: AppColors.primary,
+                onChanged: (v) async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  await Store.saveAutoUpdate(v);
+                  try {
+                    if (v) {
+                      await BackgroundService.enable();
+                    } else {
+                      await BackgroundService.disable();
+                    }
+                  } catch (e) {
+                    messenger.showSnackBar(
+                        SnackBar(content: Text('后台任务设置失败：$e')));
+                  }
+                  setState(() {});
+                },
+              ),
+            ),
+            if (Store.autoUpdate) ...[
+              const Divider(height: 1, indent: 14, endIndent: 14),
+              _tile(
+                icon: Icons.timer_outlined,
+                title: '同步频率',
+                trailing: _dropdown<int>(
+                  value: _intervalOptions.contains(Store.updateInterval)
+                      ? Store.updateInterval
+                      : 360,
+                  items: _intervalOptions,
+                  label: Store.intervalLabel,
+                  enabled: true,
+                  onChanged: (v) async {
+                    await Store.saveUpdateInterval(v);
+                    setState(() {});
+                  },
+                ),
+              ),
+            ],
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.cloud_download_outlined,
+              title: _syncing ? '正在同步…' : '立即同步',
+              subtitle: _lastSyncLabel(),
+              trailing: _syncing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.chevron_right,
+                      color: AppColors.textFaint, size: 20),
+              onTap: _syncing ? null : _syncNow,
+            ),
+          ]),
           const SizedBox(height: 14),
           _section('上课提醒'),
           _card([
@@ -50,53 +120,11 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ]),
           const SizedBox(height: 14),
-          _section('自动更新'),
-          _card([
-            _tile(
-              icon: Icons.autorenew,
-              title: '后台自动更新',
-              subtitle: '定时从教务系统重新拉取课表',
-              trailing: Switch(
-                value: Store.autoUpdate,
-                onChanged: (v) async {
-                  await Store.saveAutoUpdate(v);
-                  if (v) {
-                    await BackgroundService.enable(Store.updateInterval);
-                  } else {
-                    await BackgroundService.disable();
-                  }
-                  setState(() {});
-                },
-              ),
-            ),
-            const Divider(height: 1, indent: 14, endIndent: 14),
-            _tile(
-              icon: Icons.schedule,
-              title: '更新间隔',
-              subtitle: '系统限制最快 15 分钟一次',
-              trailing: _dropdown<int>(
-                value: _intervalOptions.contains(Store.updateInterval)
-                    ? Store.updateInterval
-                    : 360,
-                items: _intervalOptions,
-                label: Store.intervalLabel,
-                enabled: Store.autoUpdate,
-                onChanged: (v) async {
-                  await Store.saveUpdateInterval(v);
-                  if (Store.autoUpdate) {
-                    await BackgroundService.enable(v);
-                  }
-                  setState(() {});
-                },
-              ),
-            ),
-          ]),
-          const SizedBox(height: 14),
           _section('学期'),
           _card([
             _tile(
               icon: Icons.event_available_outlined,
-              title: '开学第一周的周一',
+              title: '开学第一周的周日',
               subtitle: _termStartLabel(),
               trailing: const Icon(Icons.chevron_right,
                   color: AppColors.textFaint, size: 20),
@@ -107,14 +135,12 @@ class _SettingsPageState extends State<SettingsPage> {
           _section('数据'),
           _card([
             _tile(
-              icon: Icons.sync,
-              title: '立即刷新课表',
-              subtitle: Store.lastSync == null
-                  ? '尚未更新'
-                  : '上次更新：${_fmt(Store.lastSync!)}',
-              trailing: const Icon(Icons.refresh,
-                  color: AppColors.primary, size: 20),
-              onTap: _manualRefresh,
+              icon: Icons.delete_sweep_outlined,
+              title: '清空课表',
+              subtitle:
+                  '删除本机保存的全部课程（共 ${Store.schedule.courses.length} 门）',
+              onTap: _clearAll,
+              danger: true,
             ),
           ]),
           if (StartupLog.hasError) ...[
@@ -131,22 +157,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ]),
           ],
-          const SizedBox(height: 14),
-          _section('账号'),
-          _card([
-            _tile(
-              icon: Icons.logout,
-              title: '退出登录',
-              subtitle: '清除本机保存的账号与课表',
-              onTap: _logout,
-              danger: true,
-            ),
-          ]),
           const SizedBox(height: 22),
           const Center(
-            child: Text('fafu课程表 v1.0.0\n数据来源于福建农林大学正方教务系统',
+            child: Text('fafu课程表 v2.1.0\n支持学校统一身份认证同步，也可手动录入',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11.5, color: AppColors.textFaint, height: 1.6)),
+                style: TextStyle(
+                    fontSize: 11.5, color: AppColors.textFaint, height: 1.6)),
           ),
         ],
       ),
@@ -154,54 +170,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // ---------------- 组件 ----------------
-  Widget _accountCard(String name, String id) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.primary,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: const BoxDecoration(
-              color: Color(0x33FFFFFF),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.person, color: Colors.white),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name.isEmpty ? '未登录' : name,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700)),
-                const SizedBox(height: 3),
-                Text(id.isEmpty ? '—' : '学号 $id',
-                    style: const TextStyle(
-                        color: Color(0xCCFFFFFF), fontSize: 12.5)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildRemindMode() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
+          const Row(
+            children: [
               Icon(Icons.notifications_active_outlined,
                   size: 19, color: AppColors.textSub),
               SizedBox(width: 10),
@@ -231,7 +207,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       padding: const EdgeInsets.symmetric(vertical: 11),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: active ? AppColors.primary : AppColors.primaryFaint,
+                        color:
+                            active ? AppColors.primary : AppColors.primaryFaint,
                         borderRadius: BorderRadius.circular(9),
                         border: Border.all(
                           color: active ? AppColors.primary : AppColors.divider,
@@ -349,8 +326,8 @@ class _SettingsPageState extends State<SettingsPage> {
           .map((e) => DropdownMenuItem<T>(
                 value: e,
                 child: Text(label(e),
-                    style: const TextStyle(
-                        fontSize: 13.5, color: AppColors.text)),
+                    style:
+                        const TextStyle(fontSize: 13.5, color: AppColors.text)),
               ))
           .toList(),
       onChanged: enabled ? (v) => v == null ? null : onChanged(v) : null,
@@ -358,10 +335,73 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // ---------------- 行为 ----------------
-  Future<void> _reschedule() async {
+  String _syncLabel() {
     final s = Store.schedule;
-    if (s == null) return;
-    final n = await NotificationService.reschedule(s);
+    if (!s.isSynced || s.courses.isEmpty) return '登录学校统一身份认证，一键同步课表';
+    final name = s.studentName.isNotEmpty ? s.studentName : s.studentId;
+    final t = s.fetchedAt;
+    final when = t == null
+        ? ''
+        : ' · ${t.month}月${t.day}日${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}同步';
+    return '${name.isNotEmpty ? name : '已同步'}${s.termLabel.isNotEmpty ? ' ${s.termLabel}' : ''}$when';
+  }
+
+  Future<void> _openWebLogin() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => WebLoginPage(
+          onImported: (s) async {
+            await NotificationService.reschedule(s);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('已同步 ${s.courses.length} 门课程')),
+              );
+              setState(() {});
+            }
+          },
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  String _lastSyncLabel() {
+    final t = Store.lastSync;
+    if (t == null) return '还没有同步过';
+    return '上次同步：${t.month}月${t.day}日 '
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _syncNow() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      final r = await SyncService.refreshWithStoredSession();
+      if (r.schedule != null) {
+        await NotificationService.reschedule(r.schedule!);
+        Store.version.value++;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(r.message)));
+        if (r.status == RefreshStatus.expired ||
+            r.status == RefreshStatus.noSession) {
+          _openWebLogin();
+        }
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('同步失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  Future<void> _reschedule() async {
+    final n = await NotificationService.reschedule(Store.schedule);
     if (mounted && Store.remindMode != RemindMode.off) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('已安排 $n 条上课提醒')));
@@ -387,9 +427,41 @@ class _SettingsPageState extends State<SettingsPage> {
     // 教学周从周日开始：统一落到所选那一周的周日
     final sunday = picked.subtract(Duration(days: picked.weekday % 7));
     await Store.saveTermStart(sunday);
-    final s = Store.schedule;
-    if (s != null) await NotificationService.reschedule(s);
+    await NotificationService.reschedule(Store.schedule);
     setState(() {});
+  }
+
+  Future<void> _clearAll() async {
+    final count = Store.schedule.courses.length;
+    if (count == 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('课表已经是空的')));
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('清空课表'),
+        content: Text('将删除全部 $count 门课程，确定吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child:
+                  const Text('清空', style: TextStyle(color: Color(0xFFD4380D)))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Store.clearSchedule();
+    await NotificationService.cancelAll();
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已清空课表')));
+      setState(() {});
+    }
   }
 
   void _showDiagnostics() {
@@ -415,41 +487,4 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
-
-  Future<void> _manualRefresh() async {    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('正在刷新…')));
-    final r = await SyncService.refreshWithStoredSession();
-    final s = r.schedule ?? Store.schedule;
-    if (s != null) await NotificationService.reschedule(s);
-    if (!mounted) return;
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.message)));
-  }
-
-  Future<void> _logout() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('退出登录'),
-        content: const Text('将清除本机保存的账号与课表缓存，确定吗？'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确定退出')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await BackgroundService.disable();
-    await NotificationService.cancelAll();
-    await Store.clearSession();
-    await Store.clearCredentials();
-    widget.onLogout();
-  }
-
-  String _fmt(DateTime d) =>
-      '${d.month}月${d.day}日 ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 }

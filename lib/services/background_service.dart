@@ -4,7 +4,6 @@ import 'package:workmanager/workmanager.dart';
 import 'notification_service.dart';
 import 'store.dart';
 import 'sync_service.dart';
-import 'zf_client.dart';
 
 /// 后台任务入口（必须是顶层函数）
 @pragma('vm:entry-point')
@@ -14,50 +13,30 @@ void callbackDispatcher() {
     try {
       await Store.init();
       if (!Store.autoUpdate) return true;
-      // 要么有「我的课表」的 CAS 会话，要么有老正方会话，否则没什么可刷的
-      if (!Store.hasCookie && !Store.hasSession) return true;
+      // 没有统一身份认证会话就没什么可同步的
+      if (!Store.hasCookie) return true;
 
       final last = Store.lastSync;
       final interval = Duration(minutes: Store.updateInterval);
-      final due = last == null || DateTime.now().difference(last) >= interval;
+      final due =
+          last == null || DateTime.now().difference(last) >= interval;
+      if (!due) return true;
 
-      if (due) {
-        // 到点了：真正刷新一次课表，并重排提醒
-        final result = await SyncService.refreshWithStoredSession();
-        final s = result.schedule;
-        if (s != null) {
-          await NotificationService.init();
-          await NotificationService.reschedule(s);
-        }
-        if (result.status == RefreshStatus.expired) {
-          await NotificationService.notify('登录已过期', '请打开「fafu课程表」重新登录以继续自动更新');
-        }
-      } else {
-        // 没到点：只做一次轻量请求，让服务器会话保持活跃
-        await _keepAlive();
+      final result = await SyncService.refreshWithStoredSession();
+      final s = result.schedule;
+      if (s != null) {
+        await NotificationService.init();
+        await NotificationService.reschedule(s);
+      }
+      if (result.status == RefreshStatus.expired) {
+        await NotificationService.notifyNow(
+            '登录已过期', '请打开「fafu课程表」重新完成统一身份认证，以继续自动同步');
       }
     } catch (_) {
       // 后台任务不允许抛出异常
     }
     return true;
   });
-}
-
-/// 轻量保活：正方会话闲置过久会失效，定期访问一次即可续期
-/// （「我的课表」走 CAS，没必要也不方便在后台保活）
-Future<void> _keepAlive() async {
-  if (Store.hasCookie || !Store.hasSession) return;
-  final client = ZfClient()
-    ..path = Store.sessionPath
-    ..studentId = Store.studentId
-    ..studentName = Store.schedule?.studentName ?? '';
-  try {
-    await client.fetchSchedulePage();
-    await Store.saveSession(client.path);
-  } catch (_) {
-  } finally {
-    client.close();
-  }
 }
 
 class BackgroundService {
@@ -67,8 +46,9 @@ class BackgroundService {
     await Workmanager().initialize(callbackDispatcher);
   }
 
-  /// 注册周期性后台更新（WorkManager 最小周期为 15 分钟）
-  static Future<void> enable(int intervalMinutes) async {
+  /// 注册周期性后台同步（WorkManager 最小周期 15 分钟；
+  /// 实际是否同步由 Store.updateInterval 决定，到点才真正请求）。
+  static Future<void> enable() async {
     await init();
     await Workmanager().cancelByUniqueName(taskName);
     await Workmanager().registerPeriodicTask(

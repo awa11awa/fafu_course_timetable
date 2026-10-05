@@ -206,7 +206,7 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
         studentId: Store.studentId,
         studentName: TimetableApi.jwtField(token, 'user_name').isNotEmpty
             ? TimetableApi.jwtField(token, 'user_name')
-            : (Store.schedule?.studentName ?? ""),
+            : Store.schedule.studentName,
         year: info.schoolYear,
         term: info.semester,
         fetchedAt: DateTime.now(),

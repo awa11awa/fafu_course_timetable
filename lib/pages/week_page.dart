@@ -13,7 +13,6 @@ class WeekPage extends StatefulWidget {
 }
 
 class _WeekPageState extends State<WeekPage> {
-  Schedule? _schedule;
   late int _week;
   bool _gridView = true;
 
@@ -23,37 +22,41 @@ class _WeekPageState extends State<WeekPage> {
   @override
   void initState() {
     super.initState();
-    _schedule = Store.schedule;
     _week = Store.weekOf(DateTime.now());
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = _schedule;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('周课表'),
-        actions: [
-          IconButton(
-            tooltip: _gridView ? '切换列表' : '切换课表',
-            onPressed: () => setState(() => _gridView = !_gridView),
-            icon: Icon(_gridView ? Icons.view_list_outlined : Icons.grid_view),
+    return ValueListenableBuilder<int>(
+      valueListenable: Store.version,
+      builder: (_, __, ___) {
+        final s = Store.schedule;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('周课表'),
+            actions: [
+              IconButton(
+                tooltip: _gridView ? '切换列表' : '切换课表',
+                onPressed: () => setState(() => _gridView = !_gridView),
+                icon: Icon(_gridView ? Icons.view_list_outlined : Icons.grid_view),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: s == null
-          ? const Center(
-              child: Text('暂无课表数据，请先在「今日」页刷新',
-                  style: TextStyle(color: AppColors.textSub)))
-          : Column(
-              children: [
-                _weekBar(s),
-                const Divider(height: 1),
-                Expanded(
-                  child: _gridView ? _tableView(s, _week) : _listView(s, _week),
+          body: s.courses.isEmpty
+              ? const Center(
+                  child: Text('还没有课程，去「课程」页添加吧',
+                      style: TextStyle(color: AppColors.textSub)))
+              : Column(
+                  children: [
+                    _weekBar(s),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: _gridView ? _tableView(s, _week) : _listView(s, _week),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+        );
+      },
     );
   }
 

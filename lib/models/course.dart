@@ -1,13 +1,13 @@
 import '../theme.dart';
 
-/// 单条课程安排（同一门课周次不同会拆成多条，与教务系统一致）
+/// 单条课程安排
 class Course {
   final String name;
   final String teacher;
   final String place;
   final int weekday; // 1=周一 ... 7=周日
   final List<int> periods; // 节次，如 [1,2]
-  final String weeksRaw; // 原始周次描述，如 "第11-17周|单周"
+  final String weeksRaw; // 展示用，如 "第1-16周"
   final String weekType; // 每周 / 单周 / 双周
   final int? startWeek;
   final int? endWeek;
@@ -42,7 +42,8 @@ class Course {
 
   String get endTime => periods.isEmpty ? '' : (PeriodTime.end[periods.last] ?? '');
 
-  String get timeRange => (startTime.isEmpty || endTime.isEmpty) ? '' : '$startTime-$endTime';
+  String get timeRange =>
+      (startTime.isEmpty || endTime.isEmpty) ? '' : '$startTime-$endTime';
 
   /// 该课程在第 [week] 周是否上课
   bool activeInWeek(int week) {
@@ -65,6 +66,10 @@ class Course {
 
   /// 提醒用的唯一键
   String get key => '$name|$weekday|${periods.join(",")}|$weeksRaw|$place|$teacher';
+
+  /// 手动录入时由起止周生成展示文本
+  static String buildWeeksRaw(int start, int end) =>
+      start == end ? '第$start周' : '第$start-$end周';
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -91,23 +96,30 @@ class Course {
       );
 }
 
-/// 一次抓取得到的整份课表
+/// 本机保存的整份课表（手动录入，或从学校统一身份认证同步）
 class Schedule {
-  final String studentId;
-  final String studentName;
-  final String year; // 2026-2027
-  final String term; // 1/2/3
-  final DateTime fetchedAt;
   final List<Course> courses;
 
+  /// 同步来的元数据（手动录入时为空）
+  final String studentId;
+  final String studentName;
+  final String year; // 如 2026-2027
+  final String term; // 1/2/3
+  final DateTime? fetchedAt;
+
   const Schedule({
-    required this.studentId,
-    required this.studentName,
-    required this.year,
-    required this.term,
-    required this.fetchedAt,
     required this.courses,
+    this.studentId = '',
+    this.studentName = '',
+    this.year = '',
+    this.term = '',
+    this.fetchedAt,
   });
+
+  const Schedule.empty() : this(courses: const []);
+
+  /// 是否从学校同步过
+  bool get isSynced => year.isNotEmpty;
 
   String get termLabel => year.isEmpty ? '' : '$year学年第$term学期';
 
@@ -142,23 +154,24 @@ class Schedule {
   }
 
   Map<String, dynamic> toJson() => {
+        'courses': courses.map((c) => c.toJson()).toList(),
         'studentId': studentId,
         'studentName': studentName,
         'year': year,
         'term': term,
-        'fetchedAt': fetchedAt.millisecondsSinceEpoch,
-        'courses': courses.map((c) => c.toJson()).toList(),
+        'fetchedAt': fetchedAt?.millisecondsSinceEpoch,
       };
 
   factory Schedule.fromJson(Map<String, dynamic> j) => Schedule(
+        courses: ((j['courses'] ?? []) as List)
+            .map((e) => Course.fromJson(e as Map<String, dynamic>))
+            .toList(),
         studentId: (j['studentId'] ?? '') as String,
         studentName: (j['studentName'] ?? '') as String,
         year: (j['year'] ?? '') as String,
         term: (j['term'] ?? '') as String,
-        fetchedAt:
-            DateTime.fromMillisecondsSinceEpoch((j['fetchedAt'] ?? 0) as int),
-        courses: ((j['courses'] ?? []) as List)
-            .map((e) => Course.fromJson(e as Map<String, dynamic>))
-            .toList(),
+        fetchedAt: j['fetchedAt'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch((j['fetchedAt'] as num).toInt()),
       );
 }

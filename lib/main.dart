@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'pages/courses_page.dart';
 import 'pages/home_page.dart';
-import 'pages/login_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/week_page.dart';
 import 'services/background_service.dart';
@@ -17,7 +17,7 @@ import 'theme.dart';
 
 /// 启动流程刻意保持"极简 + 不阻塞"：
 /// 这里只做同步的绑定初始化，随后立刻 runApp。
-/// 所有插件（通知、后台任务）的初始化都推迟到首帧之后，并且各自 try/catch，
+/// 插件（通知）的初始化推迟到首帧之后并 try/catch，
 /// 确保任何一个环节失败都不会让用户看到白屏。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,7 +48,6 @@ class FafuApp extends StatefulWidget {
 
 class _FafuAppState extends State<FafuApp> {
   late Future<void> _boot;
-  bool _loggedIn = false;
 
   @override
   void initState() {
@@ -57,9 +56,7 @@ class _FafuAppState extends State<FafuApp> {
   }
 
   Future<void> _bootstrap() async {
-    // 这一步是必须的：本地存储拿不到就没法工作
     await Store.init();
-    _loggedIn = Store.hasCredentials && Store.schedule != null;
 
     // 插件初始化放到首帧之后，失败也不影响主界面
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -69,25 +66,22 @@ class _FafuAppState extends State<FafuApp> {
         StartupLog.record('通知服务初始化失败：$e');
       }
       try {
-        await BackgroundService.init();
-      } catch (e) {
-        StartupLog.record('后台任务初始化失败：$e');
-      }
-      // 若此前排过提醒，启动后顺延一次
-      final s = Store.schedule;
-      if (s != null) {
-        try {
-          await NotificationService.reschedule(s);
-        } catch (e) {
-          StartupLog.record('提醒重排失败：$e');
+        if (Store.autoUpdate) {
+          await BackgroundService.enable();
+        } else {
+          await BackgroundService.disable();
         }
+      } catch (e) {
+        StartupLog.record('后台同步初始化失败：$e');
+      }
+      // 若已有课表，启动后重排一次提醒
+      try {
+        await NotificationService.reschedule(Store.schedule);
+      } catch (e) {
+        StartupLog.record('提醒重排失败：$e');
       }
     });
   }
-
-  void _onLoginDone() => setState(() => _loggedIn = true);
-
-  void _onLogout() => setState(() => _loggedIn = false);
 
   void _retry() => setState(() => _boot = _bootstrap());
 
@@ -116,9 +110,7 @@ class _FafuAppState extends State<FafuApp> {
               onRetry: _retry,
             );
           }
-          return _loggedIn
-              ? MainShell(onLogout: _onLogout)
-              : LoginPage(onDone: _onLoginDone);
+          return const MainShell();
         },
       ),
     );
@@ -203,8 +195,7 @@ class _StartupErrorPage extends StatelessWidget {
 }
 
 class MainShell extends StatefulWidget {
-  final VoidCallback onLogout;
-  const MainShell({super.key, required this.onLogout});
+  const MainShell({super.key});
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -215,14 +206,16 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      HomePage(onLogout: widget.onLogout),
-      const WeekPage(),
-      SettingsPage(onLogout: widget.onLogout),
-    ];
-
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: IndexedStack(
+        index: _index,
+        children: const [
+          HomePage(),
+          WeekPage(),
+          CoursesPage(),
+          SettingsPage(),
+        ],
+      ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -247,6 +240,10 @@ class _MainShellState extends State<MainShell> {
                 icon: Icon(Icons.calendar_view_week_outlined),
                 activeIcon: Icon(Icons.calendar_view_week),
                 label: '课表'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.edit_note_outlined),
+                activeIcon: Icon(Icons.edit_note),
+                label: '课程'),
             BottomNavigationBarItem(
                 icon: Icon(Icons.settings_outlined),
                 activeIcon: Icon(Icons.settings),

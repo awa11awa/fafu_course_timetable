@@ -1,122 +1,70 @@
 import 'package:flutter/material.dart';
 
 import '../models/course.dart';
-import '../services/notification_service.dart';
 import '../services/store.dart';
-import '../services/sync_service.dart';
 import '../theme.dart';
 import '../widgets/course_card.dart';
 import '../widgets/week_picker.dart';
 
 class HomePage extends StatefulWidget {
-  final VoidCallback onLogout;
-  const HomePage({super.key, required this.onLogout});
+  const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  Schedule? _schedule;
-  bool _busy = false;
-  String _tip = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _schedule = Store.schedule;
-  }
-
-  /// 让用户选「现在是第几周」，App 据此反推开学日期（正方页面没有当前周次信息）
+  /// 让用户选「现在是第几周」，App 据此反推开学日期、之后自动顺延
   Future<void> _pickWeek(int current) async {
-    final maxWeek = _schedule?.maxWeek ?? 20;
+    final maxWeek = Store.schedule.maxWeek;
     final ok = await showWeekPicker(context, maxWeek: maxWeek, current: current);
     if (ok && mounted) setState(() {});
   }
 
-  Future<void> _refresh() async {    setState(() => _busy = true);
-    final r = await SyncService.refreshWithStoredSession();
-    final s = r.schedule ?? Store.schedule;
-    if (s != null) await NotificationService.reschedule(s);
-    if (!mounted) return;
-    setState(() {
-      _schedule = s;
-      _busy = false;
-      _tip = switch (r.status) {
-        RefreshStatus.success => '已更新',
-        RefreshStatus.expired => '登录已过期，请到「设置」重新登录',
-        RefreshStatus.noSession => '尚未登录',
-        RefreshStatus.networkError => '网络异常，显示的是缓存数据',
-      };
-    });
-    if (_tip.isNotEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_tip)));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final week = Store.weekOf(now);
-    final today = _schedule?.dayCourses(now.weekday, week) ?? <Course>[];
+    return ValueListenableBuilder<int>(
+      valueListenable: Store.version,
+      builder: (_, __, ___) {
+        final schedule = Store.schedule;
+        final now = DateTime.now();
+        final week = Store.weekOf(now);
+        final today = schedule.dayCourses(now.weekday, week);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('fafu课程表'),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: _busy ? null : _refresh,
-            icon: _busy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        color: AppColors.primary,
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-          children: [
-            if (!Store.hasTermStart)
-              WeekHintBanner(onTap: () => _pickWeek(week)),
-            _header(now, week),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('今日课程',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.text)),
-                const SizedBox(width: 8),
-                Text('共 ${today.length} 节',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textFaint)),
-                const Spacer(),
-                if (Store.lastSync != null)
-                  Text('更新于 ${_fmtTime(Store.lastSync!)}',
+        return Scaffold(
+          appBar: AppBar(title: const Text('fafu课程表')),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+            children: [
+              if (!Store.hasTermStart)
+                WeekHintBanner(onTap: () => _pickWeek(week)),
+              _header(now, week),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Text('今日课程',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text)),
+                  const SizedBox(width: 8),
+                  Text('共 ${today.length} 节',
                       style: const TextStyle(
-                          fontSize: 11, color: AppColors.textFaint)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (today.isEmpty)
-              _empty(now)
-            else
-              ...today.map((c) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: CourseCard(course: c, highlight: _isNext(c, now)),
-                  )),
-          ],
-        ),
-      ),
+                          fontSize: 12, color: AppColors.textFaint)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (today.isEmpty)
+                _empty(schedule.courses.isEmpty)
+              else
+                ...today.map((c) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: CourseCard(course: c, highlight: _isNext(c, now)),
+                    )),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -130,7 +78,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _header(DateTime now, int week) {
-    final name = _schedule?.studentName ?? '';
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
       decoration: BoxDecoration(
@@ -144,9 +91,9 @@ class _HomePageState extends State<HomePage> {
             children: [
               const Icon(Icons.school_outlined, color: Colors.white, size: 20),
               const SizedBox(width: 8),
-              Text(
-                name.isEmpty ? '同学，你好' : '$name 同学',
-                style: const TextStyle(
+              const Text(
+                '同学，你好',
+                style: TextStyle(
                     color: Colors.white,
                     fontSize: 17,
                     fontWeight: FontWeight.w700),
@@ -166,40 +113,43 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 14),
           Text(
             '${now.month} 月 ${now.day} 日 · ${Course.weekdayNames[now.weekday - 1]}',
-            style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _schedule?.termLabel.isNotEmpty == true
-                ? _schedule!.termLabel
-                : '未获取到学期信息',
-            style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 12),
+            style: const TextStyle(
+                color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
           ),
         ],
       ),
     );
   }
 
-  Widget _empty(DateTime now) {
+  Widget _empty(bool noCourses) {
+    final now = DateTime.now();
     final isWeekend = now.weekday > 5;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 46),
+      padding: const EdgeInsets.symmetric(vertical: 46, horizontal: 20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         children: [
-          Icon(isWeekend ? Icons.weekend_outlined : Icons.free_breakfast_outlined,
-              size: 46, color: AppColors.primaryLight),
+          Icon(
+              noCourses
+                  ? Icons.edit_note_outlined
+                  : (isWeekend
+                      ? Icons.weekend_outlined
+                      : Icons.free_breakfast_outlined),
+              size: 46,
+              color: AppColors.primaryLight),
           const SizedBox(height: 12),
-          Text(isWeekend ? '周末愉快，今天没有课' : '今天没有课，好好休息',
-              style: const TextStyle(color: AppColors.textSub, fontSize: 14)),
+          Text(
+              noCourses
+                  ? '还没有录入课程\n去「课程」页添加你的课表吧'
+                  : (isWeekend ? '周末愉快，今天没有课' : '今天没有课，好好休息'),
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(color: AppColors.textSub, fontSize: 14, height: 1.6)),
         ],
       ),
     );
   }
-
-  String _fmtTime(DateTime d) =>
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 }

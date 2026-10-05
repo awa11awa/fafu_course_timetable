@@ -19,7 +19,7 @@ class AppColors {
   static const Color warn = Color(0xFFE08A2E);
 }
 
-/// 上课节次对应的默认作息时间（可在“设置”里改）
+/// 上课节次对应的默认作息时间（若与学校实际作息不符，改这里即可）
 class PeriodTime {
   static const Map<int, String> start = {
     1: '08:00', 2: '08:55', 3: '10:05', 4: '11:00', 5: '11:55',
