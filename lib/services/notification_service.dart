@@ -147,14 +147,26 @@ class NotificationService {
     await _plugin.cancelAll();
   }
 
-  /// 后台更新后的提示
-  static Future<void> notify(String title, String body) async {
+  /// 立即发一条普通通知（如：登录过期提醒）
+  static Future<void> notifyNow(String title, String body) async {
     await init();
-    await _plugin.show(
-      id: 1,
-      title: title,
-      body: body,
-      notificationDetails: _details(RemindMode.notification),
-    );
+    try {
+      await _plugin.show(
+        id: 999,
+        title: title,
+        body: body,
+        notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails(
+            channelNormal,
+            '上课提醒',
+            channelDescription: '课程开始前以通知形式提醒',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('notifyNow failed: $e');
+    }
   }
 }

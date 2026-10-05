@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/course.dart';
@@ -15,81 +16,93 @@ extension RemindModeLabel on RemindMode {
       };
 }
 
-/// 本地存储：账号、课表缓存、各项设置
+/// 本地存储：课表、学期设置、提醒设置、统一身份认证会话
 class Store {
-  static const _kXh = 'xh';
-  static const _kPw = 'pw';
   static const _kSchedule = 'schedule_cache';
-  static const _kLastSync = 'last_sync';
   static const _kTermStart = 'term_start';
   static const _kRemindMode = 'remind_mode';
   static const _kRemindLead = 'remind_lead';
-  static const _kAutoUpdate = 'auto_update';
-  static const _kInterval = 'update_interval';
   static const _kRemindCourses = 'remind_courses';
-  static const _kSessionPath = 'session_path';
-  static const _kSessionAt = 'session_at';
-  static const _kBaseUrl = 'base_url';
   static const _kToken = 'tt_token';
   static const _kCookie = 'tt_cookie';
-
-  /// 「我的课表」的 JWT（1 小时有效，可用下面的 Cookie 续期）
-  static String get token => _sp.getString(_kToken) ?? '';
-  static Future<void> saveToken(String t) => _sp.setString(_kToken, t);
-  static Future<void> clearToken() => _sp.remove(_kToken);
-
-  /// 关键：课表网关只认这个 CAS 会话 Cookie（NGXCAS），只带 JWT 会被打回登录页
-  static String get cookie => _sp.getString(_kCookie) ?? '';
-  static Future<void> saveCookie(String c) => _sp.setString(_kCookie, c);
-  static Future<void> clearCookie() => _sp.remove(_kCookie);
-  static bool get hasCookie => cookie.isNotEmpty;
-
-  /// 校内直连
-  static const String baseDirect = 'http://jwgl.fafu.edu.cn';
-
-  /// 校外访问：学校公告「校外访问教务管理系统」给出的 WebVPN 地址
-  static const String baseWebVpn = 'https://jwgl.webvpn.fafu.edu.cn:880';
+  static const _kXh = 'student_id';
+  static const _kAutoUpdate = 'auto_update';
+  static const _kInterval = 'update_interval';
+  static const _kLastSync = 'last_sync';
 
   static late SharedPreferences _sp;
+
+  /// 课表版本号：保存/清空课表后 +1，页面监听它自动刷新
+  static final ValueNotifier<int> version = ValueNotifier<int>(0);
 
   static Future<void> init() async {
     _sp = await SharedPreferences.getInstance();
   }
 
-  // ---------------- 接入地址 ----------------
-  static String get baseUrl => _sp.getString(_kBaseUrl) ?? baseDirect;
-  static Future<void> saveBaseUrl(String v) => _sp.setString(_kBaseUrl, v);
-  static bool get usingWebVpn => baseUrl.startsWith(baseWebVpn);
-
-  // ---------------- 账号 ----------------
-  static String get studentId => _sp.getString(_kXh) ?? '';
-  static String get password => _sp.getString(_kPw) ?? '';
-  static bool get hasCredentials => studentId.isNotEmpty && password.isNotEmpty;
-
-  static Future<void> saveCredentials(String id, String pw) async {
-    await _sp.setString(_kXh, id);
-    await _sp.setString(_kPw, pw);
-  }
-
-  static Future<void> clearCredentials() async {
-    await _sp.remove(_kXh);
-    await _sp.remove(_kPw);
-  }
-
-  // ---------------- 课表缓存 ----------------
-  static Schedule? get schedule {
+  // ---------------- 课表 ----------------
+  static Schedule get schedule {
     final raw = _sp.getString(_kSchedule);
-    if (raw == null || raw.isEmpty) return null;
+    if (raw == null || raw.isEmpty) return const Schedule.empty();
     try {
       return Schedule.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     } catch (_) {
-      return null;
+      return const Schedule.empty();
     }
   }
 
   static Future<void> saveSchedule(Schedule s) async {
     await _sp.setString(_kSchedule, jsonEncode(s.toJson()));
-    await _sp.setString(_kLastSync, DateTime.now().toIso8601String());
+    version.value++;
+  }
+
+  static Future<void> clearSchedule() async {
+    await _sp.remove(_kSchedule);
+    version.value++;
+  }
+
+  // ---------------- 统一身份认证会话 ----------------
+  /// 「我的课表」的 JWT（1 小时有效，可用下面的 Cookie 续期）
+  static String get token => _sp.getString(_kToken) ?? '';
+  static Future<void> saveToken(String t) => _sp.setString(_kToken, t);
+  static Future<void> clearToken() => _sp.remove(_kToken);
+
+  /// 课表网关只认这个 CAS 会话 Cookie（NGXCAS）
+  static String get cookie => _sp.getString(_kCookie) ?? '';
+  static Future<void> saveCookie(String c) => _sp.setString(_kCookie, c);
+  static Future<void> clearCookie() => _sp.remove(_kCookie);
+  static bool get hasCookie => cookie.isNotEmpty;
+
+  static String get studentId => _sp.getString(_kXh) ?? '';
+  static Future<void> saveStudentId(String id) => _sp.setString(_kXh, id);
+
+  /// 用接口返回的周次信息校准开学日期。
+  /// [termStartDate] 就是第 1 周的周日，直接用它最准；拿不到才退回用当前周次反推。
+  static Future<void> applyWeekInfo(int weekIndex, String termStartDate) async {
+    final d = DateTime.tryParse(termStartDate.split(' ').first);
+    if (d != null) {
+      await saveTermStart(d);
+    } else {
+      await setCurrentWeek(weekIndex);
+    }
+  }
+
+  // ---------------- 自动同步 ----------------
+  static bool get autoUpdate => _sp.getBool(_kAutoUpdate) ?? true;
+  static Future<void> saveAutoUpdate(bool v) =>
+      _sp.setBool(_kAutoUpdate, v);
+
+  /// 自动同步间隔（分钟），默认 6 小时
+  static int get updateInterval => _sp.getInt(_kInterval) ?? 360;
+  static Future<void> saveUpdateInterval(int minutes) =>
+      _sp.setInt(_kInterval, minutes);
+
+  static String intervalLabel(int minutes) {
+    if (minutes < 60) return '$minutes 分钟';
+    if (minutes % 60 == 0) {
+      final h = minutes ~/ 60;
+      return h < 24 ? '$h 小时' : '${h ~/ 24} 天';
+    }
+    return '$minutes 分钟';
   }
 
   static DateTime? get lastSync {
@@ -97,28 +110,10 @@ class Store {
     return v == null ? null : DateTime.tryParse(v);
   }
 
-  // ---------------- 登录会话 ----------------
-  // 正方使用「无 Cookie 会话」，会话 ID 就在 URL 里，把它存下来
-  // 后台定时任务就能复用同一会话刷新数据，无需再次输入验证码。
-  static String get sessionPath => _sp.getString(_kSessionPath) ?? '';
-  static DateTime? get sessionAt {
-    final v = _sp.getString(_kSessionAt);
-    return v == null ? null : DateTime.tryParse(v);
-  }
+  static Future<void> saveLastSync() =>
+      _sp.setString(_kLastSync, DateTime.now().toIso8601String());
 
-  static bool get hasSession => sessionPath.isNotEmpty;
-
-  static Future<void> saveSession(String path) async {
-    await _sp.setString(_kSessionPath, path);
-    await _sp.setString(_kSessionAt, DateTime.now().toIso8601String());
-  }
-
-  static Future<void> clearSession() async {
-    await _sp.remove(_kSessionPath);
-    await _sp.remove(_kSessionAt);
-  }
-
-  // ---------------- 学期开始（第 1 周周一） ----------------
+  // ---------------- 学期开始（第 1 周周日） ----------------
   static DateTime? get termStart {
     final v = _sp.getString(_kTermStart);
     return v == null ? null : DateTime.tryParse(v);
@@ -138,19 +133,6 @@ class Store {
     final sundayThisWeek = today.subtract(Duration(days: now.weekday % 7));
     final start = sundayThisWeek.subtract(Duration(days: (week - 1) * 7));
     await saveTermStart(start);
-  }
-
-  /// 用「我的课表」接口给的信息校准周次基准
-  ///
-  /// [termStartDate] 就是第 1 周的周日（如 2026-08-30），直接用它最准；
-  /// 拿不到才退回用当前周次反推。
-  static Future<void> applyWeekInfo(int weekIndex, String termStartDate) async {
-    final d = DateTime.tryParse(termStartDate.split(' ').first);
-    if (d != null) {
-      await saveTermStart(d);
-    } else {
-      await setCurrentWeek(weekIndex);
-    }
   }
 
   /// 是否已设置过周次基准
@@ -186,21 +168,4 @@ class Store {
 
   static Future<void> saveRemindCourses(Set<String> keys) =>
       _sp.setStringList(_kRemindCourses, keys.toList());
-
-  // ---------------- 自动更新 ----------------
-  static bool get autoUpdate => _sp.getBool(_kAutoUpdate) ?? true;
-  static Future<void> saveAutoUpdate(bool v) => _sp.setBool(_kAutoUpdate, v);
-
-  /// 自动更新间隔（分钟），默认 6 小时
-  static int get updateInterval => _sp.getInt(_kInterval) ?? 360;
-  static Future<void> saveUpdateInterval(int minutes) =>
-      _sp.setInt(_kInterval, minutes);
-
-  static String intervalLabel(int minutes) {
-    if (minutes < 60) return '$minutes 分钟';
-    if (minutes % 60 == 0) return '${minutes ~/ 60} 小时';
-    final h = minutes ~/ 60;
-    final m = minutes % 60;
-    return '$h 小时 $m 分钟';
-  }
 }

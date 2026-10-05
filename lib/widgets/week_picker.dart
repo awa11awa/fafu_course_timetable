@@ -5,9 +5,6 @@ import '../services/store.dart';
 import '../theme.dart';
 
 /// 让用户选「现在是第几周」，App 据此反推开学日期、之后自动顺延。
-///
-/// 为什么不自动判断：正方课表页面里只有学年/学期两个下拉，**没有当前周次信息**，
-/// 所以只能由用户告知一次。
 Future<bool> showWeekPicker(
   BuildContext context, {
   required int maxWeek,
@@ -30,7 +27,7 @@ Future<bool> showWeekPicker(
           ),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Text('教务系统不提供当前周次，需要你选一次；之后会自动按周往后走。',
+            child: Text('选一次即可，之后会自动按周往后走。',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: AppColors.textFaint)),
           ),
