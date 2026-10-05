@@ -1,7 +1,7 @@
 name: fafu_kebiao
-description: 福建农林大学课程表 - 登录教务系统查看课表并设置上课提醒
+description: 福建农林大学课程表 - 学校统一身份认证登录同步课表，也支持手动录入；查看今日课程与周课表，设置上课提醒
 publish_to: "none"
-version: 1.2.3+13
+version: 2.1.0+1
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -11,15 +11,13 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  http: any
-  html: any
-  fast_gbk: any
   shared_preferences: any
   intl: any
   flutter_local_notifications: any
   timezone: any
+  http: any
+  webview_flutter: any
   workmanager: any
-  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:
