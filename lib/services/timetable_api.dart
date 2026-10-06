@@ -49,6 +49,8 @@ class TimetableApi {
         'Accept': 'application/json, text/plain, */*',
         'Referer': timetablePage,
         'User-Agent': _ua,
+        // 官方客户端标识（2026-10-06 抓包数字FAFU确认）
+        'X-APP-CODE': 'timetable',
         if (cookie.isNotEmpty) 'Cookie': cookie,
         if (_token.isNotEmpty) 'Authorization': 'Bearer $_token',
       };
