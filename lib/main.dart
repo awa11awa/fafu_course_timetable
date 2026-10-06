@@ -9,10 +9,10 @@ import 'pages/courses_page.dart';
 import 'pages/home_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/week_page.dart';
-import 'services/background_service.dart';
 import 'services/notification_service.dart';
 import 'services/startup_log.dart';
 import 'services/store.dart';
+import 'services/sync_service.dart';
 import 'theme.dart';
 
 /// 启动流程刻意保持"极简 + 不阻塞"：
@@ -65,14 +65,20 @@ class _FafuAppState extends State<FafuApp> {
       } catch (e) {
         StartupLog.record('通知服务初始化失败：$e');
       }
+      // v2.2：无后台任务。打开 App 时确保会话有效（过期自动静默重登），
+      // 然后同步一次课表。用户划掉 App、杀后台都不影响。
       try {
-        if (Store.autoUpdate) {
-          await BackgroundService.enable();
-        } else {
-          await BackgroundService.disable();
+        if (Store.hasCookie) {
+          final ok = await SyncService.ensureSession();
+          if (ok) {
+            final r = await SyncService.refreshWithStoredSession();
+            if (r.schedule != null) {
+              await NotificationService.reschedule(r.schedule!);
+            }
+          }
         }
       } catch (e) {
-        StartupLog.record('后台同步初始化失败：$e');
+        StartupLog.record('打开自动同步失败：$e');
       }
       // 若已有课表，启动后重排一次提醒
       try {
