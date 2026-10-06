@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -36,7 +37,6 @@ class CasLoginException implements Exception {
 ///
 /// 任何一步失败都抛 [CasLoginException]，调用方回退到 WebView 手动登录。
 class CasClient {
-  static const String _defaultSalt = 'rjBFAaHsNkKAhpoi';
   static const String _aesChars =
       'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678';
 
@@ -120,6 +120,19 @@ class CasClient {
     return m?.group(1);
   }
 
+  /// 按 id 读取 input 的 value（pwdEncryptSalt 在页面上是 id 不是 name）
+  String? _inputValueById(String html, String id) {
+    final m = RegExp(
+            '<input[^>]+id="$id"[^>]*value="([^"]*)"',
+            caseSensitive: false)
+        .firstMatch(html) ??
+        RegExp(
+            '<input[^>]+value="([^"]*)"[^>]+id="$id"',
+            caseSensitive: false)
+            .firstMatch(html);
+    return m?.group(1);
+  }
+
   String? _jsVar(String html, String name) {
     final m = RegExp('$name\\s*=\\s*"([^"]*)"').firstMatch(html);
     return m?.group(1);
@@ -153,15 +166,17 @@ class CasClient {
 
       final lt = _inputValue(page, 'lt') ?? '';
       final execution = _inputValue(page, 'execution') ?? 'e1s1';
-      final salt = _inputValue(page, 'pwdEncryptSalt') ?? '';
+      // pwdEncryptSalt 在页面上是 id="pwdEncryptSalt" 的 hidden input
+      final salt = _inputValueById(page, 'pwdEncryptSalt') ??
+          _inputValue(page, 'pwdEncryptSalt') ??
+          '';
 
-      // 3. 按页面 JS 加密账号密码
-      final encUser = _encryptPassword(username, _defaultSalt);
+      // 3. 只加密密码（页面 checkForm 只把密码写入 saltPassword），用户名原文提交
       final encPass = _encryptPassword(password, salt);
 
       // 4. POST 登录表单
       final form = {
-        'username': encUser,
+        'username': username,
         'password': encPass,
         'lt': lt,
         'execution': execution,
