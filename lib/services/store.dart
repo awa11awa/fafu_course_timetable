@@ -26,10 +26,7 @@ class Store {
   static const _kToken = 'tt_token';
   static const _kCookie = 'tt_cookie';
   static const _kXh = 'student_id';
-  static const _kAutoUpdate = 'auto_update';
-  static const _kInterval = 'update_interval';
   static const _kLastSync = 'last_sync';
-  static const _kLastHeartbeat = 'last_heartbeat';
 
   static late SharedPreferences _sp;
 
@@ -87,25 +84,7 @@ class Store {
     }
   }
 
-  // ---------------- 自动同步 ----------------
-  static bool get autoUpdate => _sp.getBool(_kAutoUpdate) ?? true;
-  static Future<void> saveAutoUpdate(bool v) =>
-      _sp.setBool(_kAutoUpdate, v);
-
-  /// 自动同步间隔（分钟），默认 6 小时
-  static int get updateInterval => _sp.getInt(_kInterval) ?? 360;
-  static Future<void> saveUpdateInterval(int minutes) =>
-      _sp.setInt(_kInterval, minutes);
-
-  static String intervalLabel(int minutes) {
-    if (minutes < 60) return '$minutes 分钟';
-    if (minutes % 60 == 0) {
-      final h = minutes ~/ 60;
-      return h < 24 ? '$h 小时' : '${h ~/ 24} 天';
-    }
-    return '$minutes 分钟';
-  }
-
+  // ---------------- 同步 ----------------
   static DateTime? get lastSync {
     final v = _sp.getString(_kLastSync);
     return v == null ? null : DateTime.tryParse(v);
@@ -113,15 +92,6 @@ class Store {
 
   static Future<void> saveLastSync() =>
       _sp.setString(_kLastSync, DateTime.now().toIso8601String());
-
-  /// 上次心跳保活时间（每次后台唤醒都更新，用于判断保活任务是否存活）
-  static DateTime? get lastHeartbeat {
-    final v = _sp.getString(_kLastHeartbeat);
-    return v == null ? null : DateTime.tryParse(v);
-  }
-
-  static Future<void> saveLastHeartbeat() =>
-      _sp.setString(_kLastHeartbeat, DateTime.now().toIso8601String());
 
   // ---------------- 学期开始（第 1 周周日） ----------------
   static DateTime? get termStart {
