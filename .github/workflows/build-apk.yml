@@ -42,24 +42,24 @@ jobs:
         run: flutter build apk --release
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk "fafu课程表-v2.1.0.apk"
+        run: cp build/app/outputs/flutter-apk/app-release.apk "fafu课程表-v2.1.1.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fafu课程表-v2.1.0
-          path: fafu课程表-v2.1.0.apk
+          name: fafu课程表-v2.1.1
+          path: fafu课程表-v2.1.1.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.0
-          name: v2.1.0
+          tag_name: v2.1.1
+          name: v2.1.1
           body: |
-            fafu 课程表 v2.1.0
+            fafu 课程表 v2.1.1
             - 去除正方直连登录，保留学校统一身份认证登录
             - 新增自动同步课表（后台定时检查课程变动）
             - 今日 / 课表 / 课程 / 设置 四个页面
             - 课程手动增删改，支持单双周
             - 上课提醒通知
-          files: fafu课程表-v2.1.0.apk
+          files: fafu课程表-v2.1.1.apk
