@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../services/background_service.dart';
+import '../services/credential_store.dart';
 import '../services/notification_service.dart';
 import '../services/startup_log.dart';
 import '../services/store.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
-import 'web_login_page.dart';
+import 'login_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -17,7 +17,6 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   static const List<int> _leadOptions = [5, 10, 15, 20, 30];
-  static const List<int> _intervalOptions = [60, 360, 720, 1440];
   bool _syncing = false;
 
   @override
@@ -35,54 +34,8 @@ class _SettingsPageState extends State<SettingsPage> {
               subtitle: _syncLabel(),
               trailing: const Icon(Icons.chevron_right,
                   color: AppColors.textFaint, size: 20),
-              onTap: _openWebLogin,
+              onTap: _openLogin,
             ),
-            const Divider(height: 1, indent: 14, endIndent: 14),
-            _tile(
-              icon: Icons.sync_outlined,
-              title: '自动同步课表',
-              subtitle: Store.hasCookie
-                  ? '课程有变动时自动更新到本机'
-                  : '需要先完成统一身份认证登录',
-              trailing: Switch(
-                value: Store.autoUpdate,
-                activeThumbColor: AppColors.primary,
-                onChanged: (v) async {
-                  final messenger = ScaffoldMessenger.of(context);
-                  await Store.saveAutoUpdate(v);
-                  try {
-                    if (v) {
-                      await BackgroundService.enable();
-                    } else {
-                      await BackgroundService.disable();
-                    }
-                  } catch (e) {
-                    messenger.showSnackBar(
-                        SnackBar(content: Text('后台任务设置失败：$e')));
-                  }
-                  setState(() {});
-                },
-              ),
-            ),
-            if (Store.autoUpdate) ...[
-              const Divider(height: 1, indent: 14, endIndent: 14),
-              _tile(
-                icon: Icons.timer_outlined,
-                title: '同步频率',
-                trailing: _dropdown<int>(
-                  value: _intervalOptions.contains(Store.updateInterval)
-                      ? Store.updateInterval
-                      : 360,
-                  items: _intervalOptions,
-                  label: Store.intervalLabel,
-                  enabled: true,
-                  onChanged: (v) async {
-                    await Store.saveUpdateInterval(v);
-                    setState(() {});
-                  },
-                ),
-              ),
-            ],
             const Divider(height: 1, indent: 14, endIndent: 14),
             _tile(
               icon: Icons.cloud_download_outlined,
@@ -97,6 +50,16 @@ class _SettingsPageState extends State<SettingsPage> {
                       color: AppColors.textFaint, size: 20),
               onTap: _syncing ? null : _syncNow,
             ),
+            if (Store.hasCookie) ...[
+              const Divider(height: 1, indent: 14, endIndent: 14),
+              _tile(
+                icon: Icons.logout_outlined,
+                title: '退出登录',
+                subtitle: '清除本机保存的会话和账号密码',
+                onTap: _logout,
+                danger: true,
+              ),
+            ],
           ]),
           const SizedBox(height: 14),
           _section('上课提醒'),
@@ -159,7 +122,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           const SizedBox(height: 22),
           const Center(
-            child: Text('fafu课程表 v2.2.0\n支持学校统一身份认证同步，也可手动录入',
+            child: Text('fafu课程表 v2.2.0\n登录一次自动续登，也可手动录入',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 11.5, color: AppColors.textFaint, height: 1.6)),
@@ -346,10 +309,10 @@ class _SettingsPageState extends State<SettingsPage> {
     return '${name.isNotEmpty ? name : '已同步'}${s.termLabel.isNotEmpty ? ' ${s.termLabel}' : ''}$when';
   }
 
-  Future<void> _openWebLogin() async {
+  Future<void> _openLogin() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => WebLoginPage(
+        builder: (_) => LoginPage(
           onImported: (s) async {
             await NotificationService.reschedule(s);
             if (mounted) {
@@ -365,24 +328,56 @@ class _SettingsPageState extends State<SettingsPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _logout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text('将清除本机保存的登录会话和账号密码，课表数据保留。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('退出',
+                  style: TextStyle(color: Color(0xFFD4380D)))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Store.clearCookie();
+    await Store.clearToken();
+    await CredentialStore.clear();
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已退出登录')));
+      setState(() {});
+    }
+  }
+
   String _lastSyncLabel() {
     final t = Store.lastSync;
-    final hb = Store.lastHeartbeat;
-    final syncStr = t == null
-        ? '还没有同步过'
-        : '上次同步：${t.month}月${t.day}日 '
-            '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    if (hb == null) return syncStr;
-    final hbStr = '${hb.month}月${hb.day}日 '
-        '${hb.hour.toString().padLeft(2, '0')}:${hb.minute.toString().padLeft(2, '0')}';
-    // 心跳时间能判断保活任务是否在跑
-    return '$syncStr\n保活心跳：$hbStr';
+    if (t == null) return '还没有同步过';
+    return '上次同步：${t.month}月${t.day}日 '
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'
+        '\n打开 App 自动同步，无需后台运行';
   }
 
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() => _syncing = true);
     try {
+      // 先确保会话有效（过期自动静默重登）
+      final ok = await SyncService.ensureSession();
+      if (!ok) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('登录已过期，请重新登录')));
+          _openLogin();
+        }
+        return;
+      }
       final r = await SyncService.refreshWithStoredSession();
       if (r.schedule != null) {
         await NotificationService.reschedule(r.schedule!);
@@ -396,7 +391,7 @@ class _SettingsPageState extends State<SettingsPage> {
             .showSnackBar(SnackBar(content: Text(msg)));
         if (r.status == RefreshStatus.expired ||
             r.status == RefreshStatus.noSession) {
-          _openWebLogin();
+          _openLogin();
         }
         setState(() {});
       }
