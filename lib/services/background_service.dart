@@ -16,6 +16,16 @@ void callbackDispatcher() {
       // 没有统一身份认证会话就没什么可同步的
       if (!Store.hasCookie) return true;
 
+      // v2.1.1 心跳保活：每次唤醒先续一次会话（轻量 /he/token），
+      // 不管到没到同步间隔——CAS 靠这个续命，不发请求就闲置过期。
+      final alive = await SyncService.heartbeat();
+      if (!alive) {
+        await NotificationService.init();
+        await NotificationService.notifyNow(
+            '登录已过期', '请打开「fafu课程表」重新完成统一身份认证，以继续自动同步');
+        return true;
+      }
+
       final last = Store.lastSync;
       final interval = Duration(minutes: Store.updateInterval);
       final due =
@@ -31,6 +41,9 @@ void callbackDispatcher() {
       if (result.status == RefreshStatus.expired) {
         await NotificationService.notifyNow(
             '登录已过期', '请打开「fafu课程表」重新完成统一身份认证，以继续自动同步');
+      } else if (result.hasChanges && result.changeSummary.isNotEmpty) {
+        await NotificationService.notifyNow(
+            '课表有更新', result.changeSummary);
       }
     } catch (_) {
       // 后台任务不允许抛出异常
