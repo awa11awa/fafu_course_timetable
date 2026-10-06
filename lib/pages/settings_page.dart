@@ -159,7 +159,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           const SizedBox(height: 22),
           const Center(
-            child: Text('fafu课程表 v2.1.0\n支持学校统一身份认证同步，也可手动录入',
+            child: Text('fafu课程表 v2.2.0\n支持学校统一身份认证同步，也可手动录入',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 11.5, color: AppColors.textFaint, height: 1.6)),
@@ -367,9 +367,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String _lastSyncLabel() {
     final t = Store.lastSync;
-    if (t == null) return '还没有同步过';
-    return '上次同步：${t.month}月${t.day}日 '
-        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    final hb = Store.lastHeartbeat;
+    final syncStr = t == null
+        ? '还没有同步过'
+        : '上次同步：${t.month}月${t.day}日 '
+            '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    if (hb == null) return syncStr;
+    final hbStr = '${hb.month}月${hb.day}日 '
+        '${hb.hour.toString().padLeft(2, '0')}:${hb.minute.toString().padLeft(2, '0')}';
+    // 心跳时间能判断保活任务是否在跑
+    return '$syncStr\n保活心跳：$hbStr';
   }
 
   Future<void> _syncNow() async {
@@ -382,8 +389,11 @@ class _SettingsPageState extends State<SettingsPage> {
         Store.version.value++;
       }
       if (mounted) {
+        final msg = r.hasChanges && r.changeSummary.isNotEmpty
+            ? '${r.message}：${r.changeSummary}'
+            : r.message;
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(r.message)));
+            .showSnackBar(SnackBar(content: Text(msg)));
         if (r.status == RefreshStatus.expired ||
             r.status == RefreshStatus.noSession) {
           _openWebLogin();
