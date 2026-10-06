@@ -29,6 +29,7 @@ class Store {
   static const _kAutoUpdate = 'auto_update';
   static const _kInterval = 'update_interval';
   static const _kLastSync = 'last_sync';
+  static const _kLastHeartbeat = 'last_heartbeat';
 
   static late SharedPreferences _sp;
 
@@ -112,6 +113,15 @@ class Store {
 
   static Future<void> saveLastSync() =>
       _sp.setString(_kLastSync, DateTime.now().toIso8601String());
+
+  /// 上次心跳保活时间（每次后台唤醒都更新，用于判断保活任务是否存活）
+  static DateTime? get lastHeartbeat {
+    final v = _sp.getString(_kLastHeartbeat);
+    return v == null ? null : DateTime.tryParse(v);
+  }
+
+  static Future<void> saveLastHeartbeat() =>
+      _sp.setString(_kLastHeartbeat, DateTime.now().toIso8601String());
 
   // ---------------- 学期开始（第 1 周周日） ----------------
   static DateTime? get termStart {
