@@ -1,6 +1,4 @@
 import '../models/course.dart';
-import 'cas_client.dart';
-import 'credential_store.dart';
 import 'store.dart';
 import 'timetable_api.dart';
 
@@ -23,45 +21,37 @@ class RefreshResult {
 
 /// 用保存的统一身份认证会话刷新课表。
 ///
-/// v2.2：账号密码加密存在本机（Android Keystore），会话过期时静默重登，
-/// 全程无后台任务——打开 App 才联网，划掉、杀后台都不影响。
+/// 只有 CAS 会话 Cookie（NGXCAS）+ 可续期的 JWT，没有账号密码，
+/// 所以会话过期后必须用户重新登录，这里只负责检测并上报。
 class SyncService {
-  /// 确保会话有效：Cookie 还能用就直接续 JWT；过期了就用存的账号密码静默重登。
+  /// 心跳保活：每次后台唤醒都调一次，续 CAS 会话 + JWT。
   ///
-  /// 返回 true 表示现在有一个可用会话（Cookie 已就绪）。
-  /// 返回 false 表示需要用户手动登录（无存档密码，或静默登录失败）。
-  /// [silentRelogin] 为 false 时只检查不重登（用于只想知道状态的场景）。
-  static Future<bool> ensureSession({bool silentRelogin = true}) async {
+  /// 用最轻量的 `/he/token`（带 Cookie 换 JWT）：
+  ///   * 成功 → 会话存活，顺手把新 JWT 存下来；
+  ///   * 返回 HTML/抛"重新登录" → CAS 会话已死；
+  ///   * 网络异常 → 这次心跳作废，下次再试。
+  /// 返回 true 表示会话存活。
+  static Future<bool> heartbeat() async {
     if (!Store.hasCookie) return false;
-    // 先试最轻量的 /he/token：能换到 JWT 说明会话还活着
     try {
-      final token = await TimetableApi.fetchTokenWithCookie(Store.cookie);
+      final token =
+          await TimetableApi.fetchTokenWithCookie(Store.cookie);
       await Store.saveToken(token);
+      await Store.saveLastHeartbeat();
       return true;
-    } catch (_) {
-      // 换不到 → 会话已死，尝试静默重登
-    }
-    if (!silentRelogin) return false;
-    final creds = await CredentialStore.read();
-    if (creds == null) return false;
-    try {
-      final cookie = await CasClient().silentLogin(creds.$1, creds.$2);
-      await Store.saveCookie(cookie);
-      final token = await TimetableApi.fetchTokenWithCookie(cookie);
-      await Store.saveToken(token);
-      await Store.saveLastSync();
-      return true;
-    } on CasLoginException {
-      // 静默登不上（验证码/密码错/网络）：清掉失效会话，等用户手动登录
-      return false;
-    } catch (_) {
+    } catch (e) {
+      final msg = '$e';
+      if (msg.contains('重新登录') || msg.contains('会话已失效')) {
+        // 会话已死，记一次心跳时间（证明任务在跑，只是会话没了）
+        await Store.saveLastHeartbeat();
+        return false;
+      }
+      // 纯网络问题：不记时间，下次唤醒再试
       return false;
     }
   }
 
-  /// 用保存下来的会话刷新（下拉刷新 / 打开自动同步 / 手动同步走这条路）。
-  ///
-  /// 调用前先走 [ensureSession] 保证会话有效。
+  /// 用保存下来的会话刷新（下拉刷新 / 后台任务 / 手动同步走这条路）。
   ///
   /// 先只取当前教学周和本地缓存比对，一致就说明课表没变（省流量）；
   /// 有出入再整学期重抓一遍。

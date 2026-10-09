@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/course.dart';
-import '../services/notification_service.dart';
 import '../services/store.dart';
 import '../theme.dart';
 import '../widgets/course_card.dart';
 import '../widgets/week_picker.dart';
-import 'login_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -126,7 +124,6 @@ class _HomePageState extends State<HomePage> {
   Widget _empty(bool noCourses) {
     final now = DateTime.now();
     final isWeekend = now.weekday > 5;
-    final notLoggedIn = noCourses && !Store.hasCookie;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 46, horizontal: 20),
       decoration: BoxDecoration(
@@ -136,41 +133,21 @@ class _HomePageState extends State<HomePage> {
       child: Column(
         children: [
           Icon(
-              notLoggedIn
-                  ? Icons.login_outlined
-                  : noCourses
-                      ? Icons.edit_note_outlined
-                      : (isWeekend
-                          ? Icons.weekend_outlined
-                          : Icons.free_breakfast_outlined),
+              noCourses
+                  ? Icons.edit_note_outlined
+                  : (isWeekend
+                      ? Icons.weekend_outlined
+                      : Icons.free_breakfast_outlined),
               size: 46,
               color: AppColors.primaryLight),
           const SizedBox(height: 12),
           Text(
-              notLoggedIn
-                  ? '还没有登录\n登录学校统一身份认证，一键同步课表'
-                  : noCourses
-                      ? '还没有录入课程\n去「课程」页添加你的课表吧'
-                      : (isWeekend ? '周末愉快，今天没有课' : '今天没有课，好好休息'),
+              noCourses
+                  ? '还没有录入课程\n去「课程」页添加你的课表吧'
+                  : (isWeekend ? '周末愉快，今天没有课' : '今天没有课，好好休息'),
               textAlign: TextAlign.center,
               style:
                   const TextStyle(color: AppColors.textSub, fontSize: 14, height: 1.6)),
-          if (notLoggedIn) ...[
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => LoginPage(
-                    onImported: (s) async {
-                      await NotificationService.reschedule(s);
-                    },
-                  ),
-                ),
-              ),
-              icon: const Icon(Icons.login, size: 18),
-              label: const Text('去登录'),
-            ),
-          ],
         ],
       ),
     );
