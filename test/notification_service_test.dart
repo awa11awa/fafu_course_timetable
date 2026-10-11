@@ -39,7 +39,7 @@ void main() {
         case 'canScheduleExactNotifications': return exact;
         case 'getNotificationAppLaunchDetails': return {'notificationLaunchedApp': false};
         case 'pendingNotificationRequests': return pending.values.toList();
-        case 'cancel': pending.remove(call.arguments as int); return null;
+        case 'cancel': pending.remove((call.arguments as Map)['id'] as int); return null;
         case 'zonedSchedule':
           final args = Map<String, dynamic>.from(call.arguments as Map);
           final platform = args['platformSpecifics'] as Map;
@@ -93,7 +93,7 @@ void main() {
     expect(shown['id'], 900);
     await Store.saveLastSync();
     await NotificationService.loginRestored();
-    expect(calls.where((call) => call.method == 'cancel' && call.arguments == 900), hasLength(1));
+    expect(calls.where((call) => call.method == 'cancel' && (call.arguments as Map)['id'] == 900), hasLength(1));
     await NotificationService.notifyLoginExpired();
     expect(calls.where((call) => call.method == 'show'), hasLength(2));
   });
