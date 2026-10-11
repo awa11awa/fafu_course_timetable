@@ -114,7 +114,7 @@ class SyncService {
       }
       await NotificationService.notifyLoginExpired();
       return RefreshResult(
-          e.failure == LoginFailure.noSession ? RefreshStatus.noSession : RefreshStatus.expired,
+          RefreshStatus.expired,
           cached, e.toString());
     } catch (e) {
       return RefreshResult(RefreshStatus.networkError, cached,
