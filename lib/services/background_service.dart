@@ -14,17 +14,10 @@ void callbackDispatcher() {
       await Store.init();
       if (!Store.autoUpdate) return true;
       // 没有统一身份认证会话就没什么可同步的
-      if (!Store.hasCookie) return true;
+      if (!Store.hasSchoolSession) return true;
 
-      // v2.1.1 心跳保活：每次唤醒先续一次会话（轻量 /he/token），
-      // 不管到没到同步间隔——CAS 靠这个续命，不发请求就闲置过期。
-      final alive = await SyncService.heartbeat();
-      if (!alive) {
-        await NotificationService.init();
-        await NotificationService.notifyNow(
-            '登录已过期', '请打开「fafu课程表」重新完成统一身份认证，以继续自动同步');
-        return true;
-      }
+      // Background work is optional; a killed process recovers on next launch.
+      // Only a real authentication failure produces a login notification.
 
       final last = Store.lastSync;
       final interval = Duration(minutes: Store.updateInterval);

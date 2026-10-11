@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/course.dart';
+import 'scoped_session.dart';
 
 /// 真正的课表数据源：「我的课表」微应用
 ///
@@ -59,15 +60,22 @@ class TimetableApi {
 
   Future<http.Response> _send(Uri uri) async {
     try {
-      return await http
-          .get(uri, headers: _headers)
-          .timeout(const Duration(seconds: 40));
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', uri)
+          ..followRedirects = false
+          ..headers.addAll(_headers);
+        final stream = await client.send(request).timeout(const Duration(seconds: 40));
+        return await http.Response.fromStream(stream).timeout(const Duration(seconds: 40));
+      } finally {
+        client.close();
+      }
     } on TimeoutException {
       throw Exception('请求超时（${uri.path}），请检查网络');
-    } on SocketException catch (e) {
-      throw Exception('网络不通（${uri.path}）：${e.message}');
-    } catch (e) {
-      throw Exception('请求失败（${uri.path}）：$e');
+    } on SocketException {
+      throw const SchoolTransportException('网络不通，请检查网络后重试');
+    } catch (_) {
+      throw const SchoolTransportException('课表请求失败，请稍后重试');
     }
   }
 
@@ -90,27 +98,32 @@ class TimetableApi {
   }
 
   Map<String, dynamic> _parse(http.Response r, String path) {
+    if (r.statusCode >= 500) {
+      throw const SchoolTransportException('学校服务暂时异常，请稍后重试');
+    }
+    if ({301, 302, 303, 307, 308, 401, 403}.contains(r.statusCode)) {
+      throw const SchoolLoginException(LoginFailure.loginRequired);
+    }
     final body = decodeBody(r);
     if (looksHtml(body)) {
-      throw Exception('服务器要求重新登录（HTTP ${r.statusCode}）：'
-          '登录会话已失效，请重新登录后再试');
+      throw const SchoolTransportException('课表接口未返回可用数据，请稍后重试');
     }
     Object? j;
     try {
       j = jsonDecode(body);
     } catch (_) {
       throw Exception(
-          '接口返回的不是 JSON（HTTP ${r.statusCode}，$path）：${snippet(body)}');
+          '接口返回的不是 JSON（HTTP ${r.statusCode}，$path）');
     }
     if (j is! Map) {
-      throw Exception('接口返回异常（HTTP ${r.statusCode}，$path）：${snippet(body)}');
+      throw Exception('接口返回异常（HTTP ${r.statusCode}，$path）');
     }
     final m = j.cast<String, dynamic>();
-    if (m['code'] == null && r.statusCode == 401) {
-      throw Exception('登录凭据已失效（401）：请重新登录后再试');
+    if ({401, 403, '401', '403'}.contains(m['code'])) {
+      throw const SchoolLoginException(LoginFailure.loginRequired);
     }
     if (m['code'] != 200) {
-      throw Exception('${m['msg'] ?? '接口返回异常'}（code=${m['code']}）');
+      throw const SchoolTransportException('课表接口未返回可用数据，请稍后重试');
     }
     return m;
   }
@@ -119,25 +132,13 @@ class TimetableApi {
 
   /// 用网关 Cookie 换一个新 JWT（后台任务靠这个续期）
   static Future<String> fetchTokenWithCookie(String cookie) async {
-    final r = await http.get(
-      Uri.parse('$base/he/token'),
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'Referer': timetablePage,
-        'User-Agent': _ua,
-        'Cookie': cookie,
-      },
-    ).timeout(const Duration(seconds: 30));
-
-    final body = decodeBody(r);
-    if (looksHtml(body)) {
-      throw Exception('换取登录凭据失败：会话已失效（HTTP ${r.statusCode}），请重新登录');
+    final jar = SchoolCookies()..addLegacyGateway(cookie);
+    final client = SchoolSessionClient(jar, allowAuthHttp: false);
+    try {
+      return await client.ensureAuthenticated();
+    } finally {
+      client.close();
     }
-    final t = tokenOf(body);
-    if (t == null) {
-      throw Exception('换取登录凭据失败（HTTP ${r.statusCode}）：${snippet(body)}');
-    }
-    return t;
   }
 
   // ---------------------------------------------------------------- 接口
@@ -207,13 +208,9 @@ class TimetableApi {
     final groups = <String, List<_Lesson>>{};
     for (var i = 0; i < valid.length; i += 4) {
       final batch = valid.skip(i).take(4).toList();
-      final res = await Future.wait(batch.map((w) async {
-        try {
-          return await _scanWeek(wi.schoolYear, wi.semester, w.weekIndex);
-        } catch (_) {
-          return <_Lesson>[]; // 单周失败不影响整体
-        }
-      }));
+      // A failed week must not turn into missing courses and replace a good cache.
+      final res = await Future.wait(batch.map((w) =>
+          _scanWeek(wi.schoolYear, wi.semester, w.weekIndex)));
       for (final list in res) {
         for (final l in list) {
           groups.putIfAbsent(l.slotKey, () => <_Lesson>[]).add(l);

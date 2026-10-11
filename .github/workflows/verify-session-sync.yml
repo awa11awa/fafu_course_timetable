@@ -1,0 +1,53 @@
+name: Verify session recovery
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore binary files
+        run: |
+          find . -name "*.b64" | while read -r f; do
+            base64 -d "$f" > "${f%.b64}"
+            rm "$f"
+          done
+          chmod +x android/gradlew
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze changed code
+        run: >-
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          lib/main.dart lib/services/scoped_session.dart
+          lib/services/web_session_cookies.dart lib/services/store.dart
+          lib/services/sync_service.dart lib/services/timetable_api.dart
+          lib/services/background_service.dart lib/pages/settings_page.dart
+          lib/pages/web_login_page.dart lib/widgets/cas_consent.dart test
+      - name: Test session recovery and foreground sync
+        run: flutter test test/scoped_session_test.dart test/foreground_sync_test.dart
+      - name: Build separate Android test app
+        env:
+          FAFU_SESSION_TEST: "true"
+        run: flutter build apk --debug
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fafu-session-test
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
