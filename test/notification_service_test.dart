@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +12,7 @@ import 'package:fafu_kebiao/services/sync_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(AndroidFlutterLocalNotificationsPlugin.registerWith);
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   const permissionChannel = MethodChannel('cn.fafu/reminder_permissions');
   final calls = <MethodCall>[];
