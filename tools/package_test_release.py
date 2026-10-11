@@ -92,6 +92,7 @@ def sha256(path):
 def source_archive(destination, info):
     """Only committed files are included; tracked Base64 assets are decoded."""
     modes = git("ls-tree", "-r", "--full-tree", "-z", "HEAD").decode().split("\0")
+    tracked_paths = {entry.split("\t", 1)[1] for entry in modes if entry}
     required = {
         "pubspec.yaml", "pubspec.lock", "lib/main.dart",
         "android/gradlew", "android/gradle/wrapper/gradle-wrapper.jar",
@@ -106,6 +107,10 @@ def source_archive(destination, info):
             mode, kind, blob = metadata.split()
             if kind != "blob":
                 raise ValueError(f"Unsupported source entry: {path}")
+            # The build restores .b64 over any committed binary at this path.
+            # Package the same restored content once, even if both are tracked.
+            if not path.endswith(".b64") and f"{path}.b64" in tracked_paths:
+                continue
             content = git("cat-file", "blob", blob)
             if path.endswith(".b64"):
                 path = path[:-4]
