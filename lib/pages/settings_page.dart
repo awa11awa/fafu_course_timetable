@@ -4,7 +4,9 @@ import '../services/background_service.dart';
 import '../services/notification_service.dart';
 import '../services/startup_log.dart';
 import '../services/store.dart';
+import '../services/scoped_session.dart';
 import '../services/sync_service.dart';
+import '../widgets/cas_consent.dart';
 import '../theme.dart';
 import 'web_login_page.dart';
 
@@ -41,8 +43,8 @@ class _SettingsPageState extends State<SettingsPage> {
             _tile(
               icon: Icons.sync_outlined,
               title: '自动同步课表',
-              subtitle: Store.hasCookie
-                  ? '课程有变动时自动更新到本机'
+              subtitle: Store.hasSchoolSession
+                  ? '重新打开或回到前台时同步，也可按频率后台更新'
                   : '需要先完成统一身份认证登录',
               trailing: Switch(
                 value: Store.autoUpdate,
@@ -63,6 +65,32 @@ class _SettingsPageState extends State<SettingsPage> {
                   setState(() {});
                 },
               ),
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.key_outlined,
+              title: '自动恢复学校登录',
+              subtitle: '学校认证使用未加密 HTTP；课表使用 HTTPS',
+              trailing: Switch(
+                value: Store.casHttpAllowed,
+                activeThumbColor: AppColors.primary,
+                onChanged: (enabled) async {
+                  if (enabled) {
+                    await requestCasHttpConsent(context);
+                  } else {
+                    await Store.saveCasHttpAllowed(false);
+                  }
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.file_open_outlined,
+              title: '导入保存的学校会话',
+              subtitle: '使用本机的 fafu_sso_session 文件，无需发送账号密码',
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: _importSchoolSession,
             ),
             if (Store.autoUpdate) ...[
               const Divider(height: 1, indent: 14, endIndent: 14),
@@ -335,6 +363,49 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // ---------------- 行为 ----------------
+  Future<void> _importSchoolSession() async {
+    final controller = TextEditingController();
+    try {
+      final text = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('导入学校会话'),
+          content: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('在手机上打开 fafu_sso_session 文件，复制内容到这里。'
+                  '会话文件含登录 Cookie，请妥善保管。'),
+              const SizedBox(height: 12),
+              TextField(controller: controller, minLines: 4, maxLines: 8,
+                maxLength: 128 * 1024, autocorrect: false, enableSuggestions: false,
+                decoration: const InputDecoration(hintText: '粘贴完整会话 JSON')),
+            ],
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext, controller.text),
+                child: const Text('导入')),
+          ],
+        ),
+      );
+      if (text == null || !mounted) return;
+      final cookies = SchoolCookies.fromExport(text);
+      await Store.saveSchoolCookies(cookies);
+      await Store.clearToken();
+      if (!mounted) return;
+      setState(() {});
+      await _syncNow();
+    } on FormatException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
   String _syncLabel() {
     final s = Store.schedule;
     if (!s.isSynced || s.courses.isEmpty) return '登录学校统一身份认证，一键同步课表';
@@ -367,23 +438,23 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String _lastSyncLabel() {
     final t = Store.lastSync;
-    final hb = Store.lastHeartbeat;
     final syncStr = t == null
         ? '还没有同步过'
         : '上次同步：${t.month}月${t.day}日 '
             '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    if (hb == null) return syncStr;
-    final hbStr = '${hb.month}月${hb.day}日 '
-        '${hb.hour.toString().padLeft(2, '0')}:${hb.minute.toString().padLeft(2, '0')}';
-    // 心跳时间能判断保活任务是否在跑
-    return '$syncStr\n保活心跳：$hbStr';
+    return syncStr;
   }
 
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() => _syncing = true);
     try {
-      final r = await SyncService.refreshWithStoredSession();
+      var r = await SyncService.refreshWithStoredSession();
+      if (r.status == RefreshStatus.needsHttpPermission && mounted) {
+        if (await requestCasHttpConsent(context)) {
+          r = await SyncService.refreshWithStoredSession();
+        }
+      }
       if (r.schedule != null) {
         await NotificationService.reschedule(r.schedule!);
         Store.version.value++;

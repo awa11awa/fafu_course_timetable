@@ -7,7 +7,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/course.dart';
 import '../services/store.dart';
+import '../services/scoped_session.dart';
 import '../services/timetable_api.dart';
+import '../services/web_session_cookies.dart';
 import '../theme.dart';
 
 class WebLoginPage extends StatefulWidget {
@@ -23,6 +25,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   late final WebViewController _controller;
   String _url = TimetableApi.timetablePage;
   bool _busy = false;
+  SchoolCookies? _capturedCookies;
   int _msgSeq = 0;
   final Map<int, Completer<String>> _pending = {};
   String _hint = '请完成统一身份认证：滑块验证 + 短信验证码';
@@ -101,7 +104,7 @@ class _WebLoginPageState extends State<WebLoginPage> {
   }
 
   static const String _jsToken = r'''
-fetch('/api8/api/he/token', {credentials:'include',
+fetch('/api/he/token', {credentials:'include',
     headers:{'Accept':'application/json, text/plain, */*'}})
   .then(function(r){ return r.text().then(function(t){
     DshBridge.postMessage(JSON.stringify({id:__id, status:r.status,
@@ -119,30 +122,12 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
   /// `document.cookie` 看不到 → 必须用平台 CookieManager 读。
   /// 两条路都走，以 `document.cookie` 的值（最精确）覆盖同名项。
   Future<String> _readCookie() async {
-    final out = <String, String>{};
-    for (final u in const [
-      TimetableApi.timetablePage,
-      'https://ehall.fafu.edu.cn/',
-      'https://auth.fafu.edu.cn/',
-    ]) {
-      try {
-        final list =
-            await WebViewCookieManager().getCookies(domain: Uri.parse(u));
-        for (final c in list) {
-          if (c.name.isEmpty || c.value.isEmpty) continue;
-          out.putIfAbsent(c.name, () => c.value);
-        }
-        if (out.containsKey(TimetableApi.gatewayCookie)) break;
-      } catch (_) {}
-    }
+    final jar = await WebSessionCookies.capture();
     final env = await _eval(_jsCookie, timeoutSec: 8);
     final raw = '${env['cookie'] ?? ''}';
-    for (final pair in raw.split(';')) {
-      final i = pair.indexOf('=');
-      if (i <= 0) continue;
-      out[pair.substring(0, i).trim()] = pair.substring(i + 1).trim();
-    }
-    return out.entries.map((e) => '${e.key}=${e.value}').join('; ');
+    if (_onTimetable) jar.addHeader(raw, schoolTokenUri);
+    _capturedCookies = jar;
+    return jar.headerFor(schoolTokenUri);
   }
 
   /// 换 JWT：先用本机直连（后台任务也是这条路），失败再退回网页里 fetch。
@@ -161,7 +146,7 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
     final t = TimetableApi.tokenOf(body);
     if (t == null) {
       throw Exception('$err1；网页内返回 HTTP ${env['status']}：'
-          '${TimetableApi.snippet(body)}');
+          '没有可用的登录令牌');
     }
     return t;
   }
@@ -178,11 +163,15 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
       final cookie = await _readCookie();
       if (!cookie.contains('${TimetableApi.gatewayCookie}=')) {
         throw Exception('没有检测到登录会话，请确认上方网页已经进入「我的课表」'
-            '（不是登录页）后再点导入。当前页面：$_url');
+            '后再点导入。');
       }
 
       setState(() => _hint = '正在换取登录凭据…');
       final token = await _getToken(cookie);
+      if (_capturedCookies != null) {
+        await Store.saveSchoolCookies(_capturedCookies!);
+      }
+      await Store.saveToken(token);
 
       final api = TimetableApi(token: token, cookie: cookie);
       setState(() => _hint = '正在读取教学周信息…');
@@ -203,7 +192,8 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
       await Store.saveCookie(cookie);
 
       final s = Schedule(
-        studentId: Store.studentId,
+        studentId: TimetableApi.jwtField(token, 'user_no').isNotEmpty
+            ? TimetableApi.jwtField(token, 'user_no') : Store.studentId,
         studentName: TimetableApi.jwtField(token, 'user_name').isNotEmpty
             ? TimetableApi.jwtField(token, 'user_name')
             : Store.schedule.studentName,
@@ -213,6 +203,7 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
         courses: courses,
       );
       await Store.saveSchedule(s);
+      await Store.saveLastSync();
       if (!mounted) return;
       widget.onImported(s);
       Navigator.of(context).pop();
@@ -225,12 +216,14 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
 
   Future<void> _diagnostics() async {
     final sb = StringBuffer();
-    sb.writeln('页面：$_url');
+    final page = Uri.tryParse(_url);
+    sb.writeln('页面：${page?.host ?? '未知'}${page?.path ?? ''}');
     try {
       final cookie = await _readCookie();
       final has = cookie.contains('${TimetableApi.gatewayCookie}=');
-      sb.writeln('CAS 会话 Cookie(${TimetableApi.gatewayCookie})：'
+      sb.writeln('课表网关 Cookie(${TimetableApi.gatewayCookie})：'
           '${has ? '已获取' : '未获取'}（共 ${cookie.length} 字符）');
+      sb.writeln('学校 CAS 会话：${_capturedCookies?.hasCas == true ? '已获取' : '未获取'}');
       if (cookie.isEmpty) {
         sb.writeln('Cookie 明细：无');
       } else {
@@ -238,11 +231,11 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
       }
       final env = await _eval(_jsToken, timeoutSec: 20);
       if (env['err'] != null) {
-        sb.writeln('网页内 /he/token：${env['err']}');
+        sb.writeln('网页内 /api/he/token：请求未完成');
       } else {
-        sb.writeln('网页内 /he/token：HTTP ${env['status']} ${env['ct']}');
+        sb.writeln('网页内 /api/he/token：HTTP ${env['status']} ${env['ct']}');
         sb.writeln(
-            '返回开头：${TimetableApi.snippet('${env['body'] ?? ''}')}');
+            '令牌：${TimetableApi.tokenOf('${env['body'] ?? ''}') != null ? '已获取' : '未获取'}');
       }
     } catch (e) {
       sb.writeln('诊断出错：$e');
