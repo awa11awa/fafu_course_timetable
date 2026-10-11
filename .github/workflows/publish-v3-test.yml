@@ -1,0 +1,104 @@
+name: Publish v3.0.0 test release
+
+on:
+  push:
+    branches: [codex/v3.0.0-test-release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fafu-v3-test-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/codex/v3.0.0-test-release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore binary files
+        run: |
+          find . -name '*.b64' | while read -r f; do
+            base64 -d "$f" > "${f%.b64}"
+            rm "$f"
+          done
+          chmod +x android/gradlew
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: true
+      - name: Install locked dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Analyze session and sync code
+        run: >-
+          flutter analyze
+          lib/main.dart lib/services/scoped_session.dart
+          lib/services/web_session_cookies.dart lib/services/store.dart
+          lib/services/sync_service.dart lib/services/timetable_api.dart
+          lib/services/background_service.dart lib/pages/settings_page.dart
+          lib/pages/web_login_page.dart lib/widgets/cas_consent.dart test
+      - name: Test session recovery and foreground sync
+        run: flutter test test/scoped_session_test.dart test/foreground_sync_test.dart
+      - name: Build v3.0.0 test APK
+        env:
+          FAFU_SESSION_TEST: 'true'
+        run: flutter build apk --release
+      - name: Verify APK and package matching source
+        run: |
+          git diff --exit-code -- pubspec.lock
+          python3 tools/package_test_release.py \
+            --apk build/app/outputs/flutter-apk/app-release.apk \
+            --output dist
+      - name: Preserve complete release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fafu-v3.0.0-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fafu-v3.0.0-release
+          path: dist
+      - name: Check release checksums and source commit
+        working-directory: dist
+        run: |
+          sha256sum --check SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          info = json.loads(Path('BUILD_INFO.json').read_text())
+          assert info['source_commit'] == os.environ['GITHUB_SHA']
+          assert info['version'] == '3.0.0'
+          assert info['application_id'] == 'cn.fafu.fafu_kebiao.v3test'
+          PY
+      - name: Upload files and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v3.0.0 \
+            dist/FAFU-v3.0.0-test.apk \
+            dist/fafu_course_timetable-v3.0.0-source.zip \
+            dist/BUILD_INFO.json dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title 'FAFU课程表 v3.0.0 测试版' \
+            --notes-file dist/RELEASE_NOTES.md \
+            --draft --prerelease --latest=false
+          gh release edit v3.0.0 --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease --latest=false

@@ -1,4 +1,4 @@
-# fafu课程表 v2.1.1 · Android 应用
+# fafu课程表 v3.0.0 测试版 · Android 应用
 
 福建农林大学课表 App。Flutter 开发，蓝白纯色简约风格。
 
@@ -42,7 +42,9 @@
 
 ### 会话恢复测试
 
-验证工作流生成独立包名的「FAFU同步测试」，可以与正式版同时安装。
+v3.0.0 Release 提供独立包名 `cn.fafu.fafu_kebiao.v3test` 的「FAFU v3 测试版」，
+可以与正式版和之前的「FAFU同步测试」同时安装。
+独立测试版需要重新登录或导入自己的学校会话，不会读取另一个应用的私有数据。
 在设置中选择「导入保存的学校会话」，粘贴手机上脚本生成的
 `fafu_sso_session` 文件内容，然后按提示允许 HTTP 认证并同步。
 诊断结果 `fafu_sso_result` 不包含 Cookie，不能作为登录会话导入。
@@ -66,7 +68,7 @@ lib/
 ├── models/course.dart            Course / Schedule 模型、周次判断
 ├── services/
 │   ├── store.dart                本地存储（课表、学期设置、提醒设置、会话）
-│   ├── timetable_api.dart        课表接口（CAS Cookie + JWT，X-APP-CODE 伪装官方客户端）
+│   ├── timetable_api.dart        课表接口（CAS Cookie + JWT，X-APP-CODE 标识课表应用）
 │   ├── sync_service.dart         登录恢复、课表同步及课程变动检测
 │   ├── scoped_session.dart       按域名和路径保存 Cookie，手动处理 CAS 跳转
 │   ├── web_session_cookies.dart  从登录 WebView 读取两种会话
@@ -83,9 +85,26 @@ lib/
 
 ```bash
 flutter pub get
-flutter build apk --release
+FAFU_SESSION_TEST=true flutter build apk --release
 ```
 
-或推送到 main 分支，GitHub Actions 自动构建并发布 Release。
+使用 Flutter 3.47.6 和 JDK 17。Release 附件中的 `fafu_course_timetable-v3.0.0-source.zip`
+已还原二进制文件；直接从 GitHub 下载仓库源码时，先还原仓库里的 `.b64` 文件：
 
-产物为 arm64 APK（minSdk 24）。
+```bash
+find . -name '*.b64' | while read -r f; do
+  base64 -d "$f" > "${f%.b64}"
+  rm "$f"
+done
+chmod +x android/gradlew
+```
+
+不设置 `FAFU_SESSION_TEST` 时构建原包名应用。测试 APK 使用 CI 调试密钥签名，
+后续重新构建的测试包可能需要卸载旧测试版后安装。
+
+`Publish v3.0.0 test release` 工作流先分析改动代码、运行测试，再构建并检查 APK 的
+包名和版本；将 APK、可构建源码 ZIP、构建信息和 SHA-256 校验文件一并发布为预发布。
+main 分支的普通构建只上传 Actions 产物，不再覆盖已有版本的 Release。
+
+测试 APK 包含多种 Android 架构（minSdk 24）。真实手机的登录、长期会话有效期和学校
+服务端撤销策略还需要实际使用验证；学校 CAS 会话过期后仍需重新登录。

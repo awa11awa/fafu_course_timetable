@@ -240,7 +240,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final now = (widget.clock ?? DateTime.now)();
     final previous = _lastForegroundAttempt;
     if (!force && previous != null &&
-        now.difference(previous) < const Duration(seconds: 30)) return;
+        now.difference(previous) < const Duration(seconds: 30)) {
+      return;
+    }
     _lastForegroundAttempt = now;
     _foregroundSyncing = true;
     try {
@@ -249,7 +251,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         try { await NotificationService.reschedule(result.schedule!); } catch (_) {}
       }
       if (!mounted) return;
-      StartupLog.record('前台同步：' + result.status.name);
+      StartupLog.record('前台同步：${result.status.name}');
       if (result.status == RefreshStatus.needsHttpPermission) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text('学校登录需要恢复，请先允许 HTTP 认证'),

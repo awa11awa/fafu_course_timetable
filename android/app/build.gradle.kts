@@ -28,8 +28,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (sessionTestBuild) "cn.fafu.fafu_kebiao.sessiontest" else "cn.fafu.fafu_kebiao"
-        manifestPlaceholders["appLabel"] = if (sessionTestBuild) "FAFU同步测试" else "fafu课程表"
+        applicationId = if (sessionTestBuild) "cn.fafu.fafu_kebiao.v3test" else "cn.fafu.fafu_kebiao"
+        manifestPlaceholders["appLabel"] = if (sessionTestBuild) "FAFU v3 测试版" else "fafu课程表"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

@@ -69,7 +69,9 @@ class SessionCookie {
         name.isEmpty || !path.startsWith('/') ||
         RegExp(r'[\x00-\x20\x7f;=]').hasMatch(name) ||
         RegExp(r'[\x00-\x1f\x7f;]').hasMatch(value + path) ||
-        (seconds != null && seconds is! num)) return null;
+        (seconds != null && seconds is! num)) {
+      return null;
+    }
     DateTime? expiry;
     try {
       if (seconds != null) {
@@ -137,7 +139,7 @@ class SchoolCookies {
   String headerFor(Uri uri) {
     final cookies = _cookies.where((c) => c.matches(uri)).toList()
       ..sort((a, b) => b.path.length.compareTo(a.path.length));
-    return cookies.map((c) => c.name + '=' + c.value).join('; ');
+    return cookies.map((c) => '${c.name}=${c.value}').join('; ');
   }
 
   void discardGateway() => _cookies.removeWhere((c) => c.domain == schoolTaskHost);
@@ -244,7 +246,9 @@ class SchoolSessionClient {
     for (var depth = 0; depth < 4 && object is Map; depth++) {
       final token = object['access_token'];
       if (token is String && token.isNotEmpty &&
-          !RegExp(r'[\x00-\x20\x7f]').hasMatch(token)) return token;
+          !RegExp(r'[\x00-\x20\x7f]').hasMatch(token)) {
+        return token;
+      }
       object = object['data'];
     }
     throw const SchoolLoginException(LoginFailure.loginRequired);

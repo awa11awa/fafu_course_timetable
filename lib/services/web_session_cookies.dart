@@ -12,7 +12,7 @@ class WebSessionCookies {
         for (final cookie in cookies) {
           // Cookies read for the HTTP auth URL can be sent on that same auth
           // origin. Never merge them into the timetable's Cookie header.
-          jar.addHeader(cookie.name + '=' + cookie.value, uri);
+          jar.addHeader('${cookie.name}=${cookie.value}', uri);
         }
       } catch (_) { /* Unsupported/unavailable WebView does not block cached data. */ }
     }
