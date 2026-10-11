@@ -31,7 +31,9 @@ class SchoolLessonTimes {
         final begin = LessonPeriod.normalize(row['beginTime']);
         final end = LessonPeriod.normalize(row['endTime']);
         if (number == null || number < 1 || number > 24 ||
-            begin.isEmpty || end.isEmpty || begin.compareTo(end) >= 0) continue;
+            begin.isEmpty || end.isEmpty || begin.compareTo(end) >= 0) {
+          continue;
+        }
         periods[number] = LessonPeriod(begin, end);
       }
       if (periods.isNotEmpty) campuses['${raw['campusCode']}'] = periods;

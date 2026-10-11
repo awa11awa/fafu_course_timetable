@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/course.dart';
 import '../services/store.dart';
+import '../services/notification_service.dart';
 import '../services/scoped_session.dart';
 import '../services/timetable_api.dart';
 import '../services/web_session_cookies.dart';
@@ -211,6 +212,7 @@ DshBridge.postMessage(JSON.stringify({id:__id, cookie:(document.cookie||'')}));
       );
       await Store.saveSchedule(s);
       await Store.saveLastSync();
+      await NotificationService.loginRestored();
       if (!mounted) return;
       widget.onImported(s);
       Navigator.of(context).pop();

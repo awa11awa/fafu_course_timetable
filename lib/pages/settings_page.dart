@@ -50,7 +50,7 @@ class _SettingsPageState extends State<SettingsPage> with WidgetsBindingObserver
   Future<void> _loadReminderPermissions() async {
     try {
       final permission = await NotificationService.permissions();
-      if (mounted) setState(() => _reminderPermissions = permission);
+      if (mounted) setState(() { _reminderPermissions = permission; _reminderError = null; });
     } catch (_) {
       if (mounted) setState(() => _reminderError = '暂时无法读取提醒状态，请点击检查权限重试');
     }

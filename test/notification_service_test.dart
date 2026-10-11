@@ -90,6 +90,8 @@ void main() {
     final shown = calls.singleWhere((call) => call.method == 'show').arguments as Map;
     expect(shown['id'], 900);
     await Store.saveLastSync();
+    await NotificationService.loginRestored();
+    expect(calls.where((call) => call.method == 'cancel' && call.arguments == 900), hasLength(1));
     await NotificationService.notifyLoginExpired();
     expect(calls.where((call) => call.method == 'show'), hasLength(2));
   });

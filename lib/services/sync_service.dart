@@ -80,6 +80,7 @@ class SyncService {
         final s = _build(courses, info, cached);
         await Store.saveSchedule(s);
         await Store.saveLastSync();
+        await NotificationService.loginRestored();
         return RefreshResult(RefreshStatus.success, s, '已同步 ${courses.length} 门课程');
       }
 
@@ -93,6 +94,7 @@ class SyncService {
         final s = _build(cached.courses, info, cached);
         await Store.saveSchedule(s);
         await Store.saveLastSync();
+        await NotificationService.loginRestored();
         return RefreshResult(RefreshStatus.success, s, '课表无变化');
       }
 
@@ -104,6 +106,7 @@ class SyncService {
       final s = _build(courses, info, cached);
       await Store.saveSchedule(s);
       await Store.saveLastSync();
+      await NotificationService.loginRestored();
       final diff = _diffCourses(cached.courses, courses);
       return RefreshResult(
           RefreshStatus.success, s, '课表有更新，已同步 ${courses.length} 门课程',

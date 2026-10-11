@@ -201,6 +201,13 @@ class NotificationService {
     await _plugin.cancel(id: id);
   }
 
+  static Future<void> loginRestored() async {
+    try {
+      await init();
+      await _plugin.cancel(id: 900);
+    } catch (_) {}
+  }
+
   static Future<void> notifyLoginExpired() => _expiryNotification ??=
       _notifyLoginExpired().whenComplete(() => _expiryNotification = null);
 
