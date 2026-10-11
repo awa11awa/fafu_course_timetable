@@ -1,5 +1,5 @@
 import '../models/course.dart';
-import '../theme.dart';
+import 'school_clock.dart';
 import 'store.dart';
 
 class ReminderItem {
@@ -30,12 +30,12 @@ class ReminderPlanner {
     int leadMinutes = 10,
     DateTime? from,
   }) {
-    final now = from ?? DateTime.now();
+    final now = SchoolClock.now(from);
     final items = <ReminderItem>[];
     final remindOnly = Store.remindCourses;
 
     for (var offset = 0; offset <= days; offset++) {
-      final date = DateTime(now.year, now.month, now.day).add(Duration(days: offset));
+      final date = SchoolClock.at(now.year, now.month, now.day).add(Duration(days: offset));
       final week = Store.weekOf(date);
       final weekday = date.weekday; // 1=周一
 
@@ -45,10 +45,10 @@ class ReminderPlanner {
         if (c.periods.isEmpty) continue;
         if (remindOnly.isNotEmpty && !remindOnly.contains(c.key)) continue;
 
-        final startText = PeriodTime.start[c.periods.first];
-        if (startText == null) continue;
+        final startText = c.startTime;
+        if (startText.isEmpty) continue;
         final parts = startText.split(':');
-        final classStart = DateTime(date.year, date.month, date.day,
+        final classStart = SchoolClock.at(date.year, date.month, date.day,
             int.parse(parts[0]), int.parse(parts[1]));
         final when = classStart.subtract(Duration(minutes: leadMinutes));
         if (when.isBefore(now)) continue;

@@ -1,10 +1,11 @@
-import '../theme.dart';
+import 'lesson_time.dart';
 
 /// 单条课程安排
 class Course {
   final String name;
   final String teacher;
   final String place;
+  final String campusCode;
   final int weekday; // 1=周一 ... 7=周日
   final List<int> periods; // 节次，如 [1,2]
   final String weeksRaw; // 展示用，如 "第1-16周"
@@ -16,6 +17,7 @@ class Course {
     required this.name,
     required this.teacher,
     required this.place,
+    this.campusCode = '',
     required this.weekday,
     required this.periods,
     required this.weeksRaw,
@@ -38,9 +40,9 @@ class Course {
 
   String get periodText => periods.isEmpty ? '' : '第${periods.join(',')}节';
 
-  String get startTime => periods.isEmpty ? '' : (PeriodTime.start[periods.first] ?? '');
+  String get startTime => periods.isEmpty ? '' : PeriodTime.startOf(periods.first, campusCode);
 
-  String get endTime => periods.isEmpty ? '' : (PeriodTime.end[periods.last] ?? '');
+  String get endTime => periods.isEmpty ? '' : PeriodTime.endOf(periods.last, campusCode);
 
   String get timeRange =>
       (startTime.isEmpty || endTime.isEmpty) ? '' : '$startTime-$endTime';
@@ -75,6 +77,7 @@ class Course {
         'name': name,
         'teacher': teacher,
         'place': place,
+        'campusCode': campusCode,
         'weekday': weekday,
         'periods': periods,
         'weeksRaw': weeksRaw,
@@ -87,6 +90,7 @@ class Course {
         name: (j['name'] ?? '') as String,
         teacher: (j['teacher'] ?? '') as String,
         place: (j['place'] ?? '') as String,
+        campusCode: (j['campusCode'] ?? '').toString(),
         weekday: (j['weekday'] ?? 1) as int,
         periods: ((j['periods'] ?? []) as List).map((e) => e as int).toList(),
         weeksRaw: (j['weeksRaw'] ?? '') as String,

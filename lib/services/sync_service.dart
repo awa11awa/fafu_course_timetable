@@ -1,8 +1,10 @@
 import '../models/course.dart';
 import 'store.dart';
+import 'notification_service.dart';
+import 'scoped_session.dart';
 import 'timetable_api.dart';
 
-enum RefreshStatus { success, noSession, expired, networkError }
+enum RefreshStatus { success, noSession, expired, networkError, needsHttpPermission }
 
 class RefreshResult {
   final RefreshStatus status;
@@ -21,52 +23,55 @@ class RefreshResult {
 
 /// 用保存的统一身份认证会话刷新课表。
 ///
-/// 只有 CAS 会话 Cookie（NGXCAS）+ 可续期的 JWT，没有账号密码，
-/// 所以会话过期后必须用户重新登录，这里只负责检测并上报。
+/// 先换新 JWT；课表网关会话失效时，使用保存的学校 CAS 会话重新取得
+/// 网关 Cookie。CAS 自身无效时仍需要重新登录，不声称永久登录。
 class SyncService {
-  /// 心跳保活：每次后台唤醒都调一次，续 CAS 会话 + JWT。
-  ///
-  /// 用最轻量的 `/he/token`（带 Cookie 换 JWT）：
-  ///   * 成功 → 会话存活，顺手把新 JWT 存下来；
-  ///   * 返回 HTML/抛"重新登录" → CAS 会话已死；
-  ///   * 网络异常 → 这次心跳作废，下次再试。
-  /// 返回 true 表示会话存活。
-  static Future<bool> heartbeat() async {
-    if (!Store.hasCookie) return false;
-    try {
-      final token =
-          await TimetableApi.fetchTokenWithCookie(Store.cookie);
-      await Store.saveToken(token);
-      await Store.saveLastHeartbeat();
-      return true;
-    } catch (e) {
-      final msg = '$e';
-      if (msg.contains('重新登录') || msg.contains('会话已失效')) {
-        // 会话已死，记一次心跳时间（证明任务在跑，只是会话没了）
-        await Store.saveLastHeartbeat();
-        return false;
-      }
-      // 纯网络问题：不记时间，下次唤醒再试
-      return false;
-    }
-  }
+  static Future<RefreshResult>? _inFlight;
 
   /// 用保存下来的会话刷新（下拉刷新 / 后台任务 / 手动同步走这条路）。
   ///
   /// 先只取当前教学周和本地缓存比对，一致就说明课表没变（省流量）；
   /// 有出入再整学期重抓一遍。
-  static Future<RefreshResult> refreshWithStoredSession() async {
-    if (!Store.hasCookie) {
+  static Future<RefreshResult> refreshWithStoredSession() {
+    return _inFlight ??= _refresh().whenComplete(() => _inFlight = null);
+  }
+
+  static Future<RefreshResult> _refresh() async {
+    if (!Store.hasSchoolSession) {
+      if (Store.token.isNotEmpty) {
+        await NotificationService.notifyLoginExpired();
+        return RefreshResult(RefreshStatus.expired, Store.schedule, '登录已失效，请重新登录');
+      }
       return RefreshResult(
           RefreshStatus.noSession, Store.schedule, '尚未登录，请先完成统一身份认证');
     }
     final cached = Store.schedule;
     try {
+      final jar = Store.schoolCookies..addLegacyGateway(Store.cookie);
+      final session = SchoolSessionClient(jar, allowAuthHttp: Store.casHttpAllowed);
+      try {
+        final token = await session.ensureAuthenticated();
+        await Store.saveToken(token);
+      } finally {
+        session.close();
+        await Store.saveSchoolCookies(jar);
+      }
       final api = TimetableApi(token: Store.token, cookie: Store.cookie);
       final info = await api.weekInfo();
       await Store.applyWeekInfo(info.weekIndex, info.termStartDate);
+      try {
+        await Store.saveLessonTimes(await api.lessonTimes());
+      } on SchoolLoginException {
+        rethrow;
+      } catch (_) {
+        // A config outage retains the last verified campus timetable.
+      }
 
-      if (cached.courses.isEmpty) {
+      final studentId = TimetableApi.jwtField(Store.token, 'user_no');
+      final changedIdentity = studentId.isNotEmpty && studentId != cached.studentId;
+      final changedTerm = (info.schoolYear.isNotEmpty && info.schoolYear != cached.year) ||
+          (info.semester.isNotEmpty && info.semester != cached.term);
+      if (cached.courses.isEmpty || changedIdentity || changedTerm) {
         final courses = await api.fetchSemester(info: info);
         if (courses.isEmpty) {
           return RefreshResult(
@@ -103,12 +108,17 @@ class SyncService {
       return RefreshResult(
           RefreshStatus.success, s, '课表有更新，已同步 ${courses.length} 门课程',
           hasChanges: diff.hasChanges, changeSummary: diff.summary);
-    } catch (e) {
-      final msg = '$e';
-      if (msg.contains('重新登录') || msg.contains('凭据已失效')) {
-        return RefreshResult(RefreshStatus.expired, cached, '登录已过期，请重新登录');
+    } on SchoolLoginException catch (e) {
+      if (e.failure == LoginFailure.needsHttpPermission) {
+        return RefreshResult(RefreshStatus.needsHttpPermission, cached, e.toString());
       }
-      return RefreshResult(RefreshStatus.networkError, cached, '网络异常：$msg');
+      await NotificationService.notifyLoginExpired();
+      return RefreshResult(
+          e.failure == LoginFailure.noSession ? RefreshStatus.noSession : RefreshStatus.expired,
+          cached, e.toString());
+    } catch (e) {
+      return RefreshResult(RefreshStatus.networkError, cached,
+          e is SchoolTransportException ? e.toString() : '暂时无法同步，请检查网络后重试');
     }
   }
 
@@ -145,9 +155,11 @@ class SyncService {
           List<Course> courses, WeekInfo info, Schedule cached) =>
       Schedule(
         courses: courses,
-        studentId:
-            cached.studentId.isNotEmpty ? cached.studentId : Store.studentId,
-        studentName: cached.studentName,
+        studentId: TimetableApi.jwtField(Store.token, 'user_no').isNotEmpty
+            ? TimetableApi.jwtField(Store.token, 'user_no')
+            : (cached.studentId.isNotEmpty ? cached.studentId : Store.studentId),
+        studentName: TimetableApi.jwtField(Store.token, 'user_name').isNotEmpty
+            ? TimetableApi.jwtField(Store.token, 'user_name') : cached.studentName,
         year: info.schoolYear.isEmpty ? cached.year : info.schoolYear,
         term: info.semester.isEmpty ? cached.term : info.semester,
         fetchedAt: DateTime.now(),

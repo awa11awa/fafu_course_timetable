@@ -8,6 +8,8 @@ plugins {
 
 // 读取签名配置（android/key.properties）
 val keystoreProperties = Properties()
+// CI can build an independently installed test app without changing release IDs.
+val sessionTestBuild = System.getenv("FAFU_SESSION_TEST") == "true"
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
@@ -26,7 +28,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "cn.fafu.fafu_kebiao"
+        applicationId = if (sessionTestBuild) "cn.fafu.fafu_kebiao.v3test" else "cn.fafu.fafu_kebiao"
+        manifestPlaceholders["appLabel"] = if (sessionTestBuild) "FAFU v3 测试版" else "fafu课程表"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

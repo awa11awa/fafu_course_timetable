@@ -13,6 +13,9 @@ import 'services/background_service.dart';
 import 'services/notification_service.dart';
 import 'services/startup_log.dart';
 import 'services/store.dart';
+import 'services/sync_service.dart';
+import 'services/web_session_cookies.dart';
+import 'widgets/cas_consent.dart';
 import 'theme.dart';
 
 /// 启动流程刻意保持"极简 + 不阻塞"：
@@ -48,11 +51,42 @@ class FafuApp extends StatefulWidget {
 
 class _FafuAppState extends State<FafuApp> {
   late Future<void> _boot;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _alarmDialogVisible = false;
 
   @override
   void initState() {
     super.initState();
+    NotificationService.alarm.addListener(_showAlarm);
     _boot = _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    NotificationService.alarm.removeListener(_showAlarm);
+    super.dispose();
+  }
+
+  void _showAlarm() {
+    if (_alarmDialogVisible || NotificationService.alarm.value == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final alert = NotificationService.alarm.value;
+      final dialogContext = _navigatorKey.currentContext;
+      if (!mounted || alert == null || dialogContext == null || _alarmDialogVisible) return;
+      _alarmDialogVisible = true;
+      NotificationService.alarm.value = null;
+      await showDialog<void>(
+        context: dialogContext,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text(alert.title), content: Text(alert.body),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('知道了'))],
+        ),
+      );
+      await NotificationService.dismissAlarm(alert.id);
+      _alarmDialogVisible = false;
+      _showAlarm();
+    });
   }
 
   Future<void> _bootstrap() async {
@@ -88,6 +122,7 @@ class _FafuAppState extends State<FafuApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'fafu课程表',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
@@ -195,14 +230,89 @@ class _StartupErrorPage extends StatelessWidget {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  final Future<RefreshResult> Function()? refresh;
+  final DateTime Function()? clock;
+  const MainShell({super.key, this.refresh, this.clock});
 
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _index = 0;
+  bool _foregroundSyncing = false;
+  DateTime? _lastForegroundAttempt;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncOnForeground());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _syncOnForeground();
+  }
+
+  Future<RefreshResult> _refreshForegroundSession() async {
+    // Migrate an existing installation's WebView session when available.
+    if (!Store.schoolCookies.hasCas) {
+      final cookies = await WebSessionCookies.capture();
+      if (cookies.hasCas) {
+        if (!cookies.hasGateway) cookies.addLegacyGateway(Store.cookie);
+        await Store.saveSchoolCookies(cookies);
+      }
+    }
+    return SyncService.refreshWithStoredSession();
+  }
+
+  Future<void> _syncOnForeground({bool force = false}) async {
+    if (!mounted || !Store.autoUpdate || _foregroundSyncing) return;
+    final now = (widget.clock ?? DateTime.now)();
+    final previous = _lastForegroundAttempt;
+    if (!force && previous != null &&
+        now.difference(previous) < const Duration(seconds: 30)) {
+      return;
+    }
+    _lastForegroundAttempt = now;
+    _foregroundSyncing = true;
+    try {
+      final result = await (widget.refresh ?? _refreshForegroundSession)();
+      if (result.status == RefreshStatus.success && result.schedule != null) {
+        try { await NotificationService.reschedule(result.schedule!); } catch (_) {}
+      }
+      if (!mounted) return;
+      StartupLog.record('前台同步：${result.status.name}');
+      if (result.status == RefreshStatus.needsHttpPermission) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('学校登录需要恢复，请先允许 HTTP 认证'),
+          action: SnackBarAction(label: '允许恢复', onPressed: () async {
+            if (await requestCasHttpConsent(context) && mounted) {
+              await _syncOnForeground(force: true);
+            }
+          }),
+        ));
+      } else if (result.status == RefreshStatus.expired ||
+          result.status == RefreshStatus.networkError) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('暂时无法同步，已保留本地课表')));
+      }
+    } finally {
+      _foregroundSyncing = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

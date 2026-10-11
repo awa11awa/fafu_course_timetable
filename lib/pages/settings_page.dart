@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/background_service.dart';
 import '../services/notification_service.dart';
 import '../services/startup_log.dart';
 import '../services/store.dart';
+import '../services/scoped_session.dart';
 import '../services/sync_service.dart';
+import '../widgets/cas_consent.dart';
 import '../theme.dart';
 import 'web_login_page.dart';
 
@@ -15,10 +19,102 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage> with WidgetsBindingObserver {
   static const List<int> _leadOptions = [5, 10, 15, 20, 30];
   static const List<int> _intervalOptions = [60, 360, 720, 1440];
   bool _syncing = false;
+  bool _reminderBusy = false;
+  ReminderPermissions? _reminderPermissions;
+  String? _reminderError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadReminderPermissions());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_reminderBusy) {
+      unawaited(_refreshRemindersAfterResume());
+    }
+  }
+
+  Future<void> _loadReminderPermissions() async {
+    try {
+      final permission = await NotificationService.permissions();
+      if (mounted) setState(() => _reminderPermissions = permission);
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '暂时无法读取提醒状态，请点击检查权限重试');
+    }
+  }
+
+  Future<void> _refreshRemindersAfterResume() async {
+    try {
+      await NotificationService.reschedule(Store.schedule);
+      await _loadReminderPermissions();
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '提醒未能安排，请检查提醒权限后重试');
+    }
+  }
+
+  Future<void> _setReminderMode(RemindMode mode) async {
+    if (_reminderBusy) return;
+    setState(() => _reminderBusy = true);
+    try {
+      await Store.saveRemindMode(mode);
+      if (mode == RemindMode.off) {
+        await NotificationService.cancelAll();
+        await _loadReminderPermissions();
+      } else {
+        await NotificationService.requestPermissions();
+        await _reschedule();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '提醒未能安排，请检查提醒权限后重试');
+    } finally {
+      if (mounted) setState(() => _reminderBusy = false);
+    }
+  }
+
+  Future<void> _checkReminderPermissions() async {
+    if (_reminderBusy) return;
+    setState(() => _reminderBusy = true);
+    try {
+      final granted = await NotificationService.requestPermissions();
+      if (!granted) await NotificationService.openNotificationSettings();
+      await _reschedule();
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '请在系统设置中开启通知、闹钟及提醒权限');
+    } finally {
+      if (mounted) setState(() => _reminderBusy = false);
+    }
+  }
+
+  Future<void> _testReminder() async {
+    if (_reminderBusy) return;
+    setState(() => _reminderBusy = true);
+    try {
+      await _loadReminderPermissions();
+      final ok = await NotificationService.testReminder();
+      if (!mounted) return;
+      final message = !ok ? '请先开启通知权限' :
+          _reminderPermissions?.exact == true ? '已安排10秒后测试提醒，可返回桌面等待' :
+          '已安排测试提醒；准时提醒权限未开启，系统可能延迟送达';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '测试提醒未能安排，请检查提醒权限');
+    } finally {
+      if (mounted) setState(() => _reminderBusy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,8 +137,8 @@ class _SettingsPageState extends State<SettingsPage> {
             _tile(
               icon: Icons.sync_outlined,
               title: '自动同步课表',
-              subtitle: Store.hasCookie
-                  ? '课程有变动时自动更新到本机'
+              subtitle: Store.hasSchoolSession
+                  ? '重新打开或回到前台时同步，也可按频率后台更新'
                   : '需要先完成统一身份认证登录',
               trailing: Switch(
                 value: Store.autoUpdate,
@@ -63,6 +159,32 @@ class _SettingsPageState extends State<SettingsPage> {
                   setState(() {});
                 },
               ),
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.key_outlined,
+              title: '自动恢复学校登录',
+              subtitle: '学校认证使用未加密 HTTP；课表使用 HTTPS',
+              trailing: Switch(
+                value: Store.casHttpAllowed,
+                activeThumbColor: AppColors.primary,
+                onChanged: (enabled) async {
+                  if (enabled) {
+                    await requestCasHttpConsent(context);
+                  } else {
+                    await Store.saveCasHttpAllowed(false);
+                  }
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.file_open_outlined,
+              title: '导入保存的学校会话',
+              subtitle: '使用本机的 fafu_sso_session 文件，无需发送账号密码',
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: _importSchoolSession,
             ),
             if (Store.autoUpdate) ...[
               const Divider(height: 1, indent: 14, endIndent: 14),
@@ -114,9 +236,29 @@ class _SettingsPageState extends State<SettingsPage> {
                 onChanged: (v) async {
                   await Store.saveRemindLead(v);
                   await _reschedule();
-                  setState(() {});
+                  if (mounted) setState(() {});
                 },
               ),
+            ),
+            const Divider(height: 1, indent: 14, endIndent: 14),
+            _tile(
+              icon: Icons.notifications_outlined,
+              title: '提醒状态',
+              subtitle: _reminderError ?? _reminderPermissions?.label(Store.remindMode) ?? '正在读取提醒权限…',
+            ),
+            _tile(
+              icon: Icons.security_outlined,
+              title: _reminderBusy ? '正在检查…' : '检查并开启提醒权限',
+              subtitle: '允许通知后，登录失效时也会提醒；同一次失效只提醒一次',
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: _reminderBusy ? null : _checkReminderPermissions,
+            ),
+            _tile(
+              icon: Icons.notification_add_outlined,
+              title: '10秒后测试提醒',
+              subtitle: '使用当前提醒方式，验证返回桌面后的提醒',
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: _reminderBusy ? null : _testReminder,
             ),
           ]),
           const SizedBox(height: 14),
@@ -159,7 +301,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           const SizedBox(height: 22),
           const Center(
-            child: Text('fafu课程表 v2.2.0\n支持学校统一身份认证同步，也可手动录入',
+            child: Text('fafu课程表 v3.1.0\n支持学校统一身份认证同步，也可手动录入',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 11.5, color: AppColors.textFaint, height: 1.6)),
@@ -193,16 +335,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: GestureDetector(
-                    onTap: () async {
-                      await Store.saveRemindMode(m);
-                      if (m == RemindMode.off) {
-                        await NotificationService.cancelAll();
-                      } else {
-                        await NotificationService.requestPermissions();
-                        await _reschedule();
-                      }
-                      setState(() {});
-                    },
+                    onTap: _reminderBusy ? null : () => _setReminderMode(m),
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 11),
                       alignment: Alignment.center,
@@ -237,7 +370,7 @@ class _SettingsPageState extends State<SettingsPage> {
             switch (Store.remindMode) {
               RemindMode.off => '已关闭上课提醒',
               RemindMode.notification => '课前以通知栏消息提醒，响一声',
-              RemindMode.alarm => '课前以闹钟方式全屏弹出，带铃声与震动',
+              RemindMode.alarm => '课前以闹钟通知提醒，开启全屏权限后可在锁屏时弹出',
             },
             style: const TextStyle(fontSize: 12, color: AppColors.textFaint),
           ),
@@ -335,6 +468,49 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // ---------------- 行为 ----------------
+  Future<void> _importSchoolSession() async {
+    final controller = TextEditingController();
+    try {
+      final text = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('导入学校会话'),
+          content: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('在手机上打开 fafu_sso_session 文件，复制内容到这里。'
+                  '会话文件含登录 Cookie，请妥善保管。'),
+              const SizedBox(height: 12),
+              TextField(controller: controller, minLines: 4, maxLines: 8,
+                maxLength: 128 * 1024, autocorrect: false, enableSuggestions: false,
+                decoration: const InputDecoration(hintText: '粘贴完整会话 JSON')),
+            ],
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext, controller.text),
+                child: const Text('导入')),
+          ],
+        ),
+      );
+      if (text == null || !mounted) return;
+      final cookies = SchoolCookies.fromExport(text);
+      await Store.saveSchoolCookies(cookies);
+      await Store.clearToken();
+      if (!mounted) return;
+      setState(() {});
+      await _syncNow();
+    } on FormatException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
   String _syncLabel() {
     final s = Store.schedule;
     if (!s.isSynced || s.courses.isEmpty) return '登录学校统一身份认证，一键同步课表';
@@ -367,23 +543,23 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String _lastSyncLabel() {
     final t = Store.lastSync;
-    final hb = Store.lastHeartbeat;
     final syncStr = t == null
         ? '还没有同步过'
         : '上次同步：${t.month}月${t.day}日 '
             '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    if (hb == null) return syncStr;
-    final hbStr = '${hb.month}月${hb.day}日 '
-        '${hb.hour.toString().padLeft(2, '0')}:${hb.minute.toString().padLeft(2, '0')}';
-    // 心跳时间能判断保活任务是否在跑
-    return '$syncStr\n保活心跳：$hbStr';
+    return syncStr;
   }
 
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() => _syncing = true);
     try {
-      final r = await SyncService.refreshWithStoredSession();
+      var r = await SyncService.refreshWithStoredSession();
+      if (r.status == RefreshStatus.needsHttpPermission && mounted) {
+        if (await requestCasHttpConsent(context)) {
+          r = await SyncService.refreshWithStoredSession();
+        }
+      }
       if (r.schedule != null) {
         await NotificationService.reschedule(r.schedule!);
         Store.version.value++;
@@ -411,10 +587,19 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _reschedule() async {
-    final n = await NotificationService.reschedule(Store.schedule);
-    if (mounted && Store.remindMode != RemindMode.off) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('已安排 $n 条上课提醒')));
+    try {
+      final n = await NotificationService.reschedule(Store.schedule);
+      final permission = await NotificationService.permissions();
+      if (!mounted) return;
+      setState(() { _reminderPermissions = permission; _reminderError = null; });
+      if (Store.remindMode != RemindMode.off) {
+        final message = !permission.notifications ? '通知未开启，请检查提醒权限' :
+            n == 0 ? '未来14天没有待提醒课程，请检查课表、周次和课程提醒选择' :
+            '已安排 $n 条上课提醒${permission.exact ? '' : '，未开启准时提醒，可能延迟'}';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (_) {
+      if (mounted) setState(() => _reminderError = '提醒未能安排，请检查权限后重试');
     }
   }
 

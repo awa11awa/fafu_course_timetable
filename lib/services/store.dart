@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/course.dart';
+import '../models/lesson_time.dart';
+import 'scoped_session.dart';
 
 /// 提醒方式
 enum RemindMode { off, notification, alarm }
@@ -25,10 +27,14 @@ class Store {
   static const _kRemindCourses = 'remind_courses';
   static const _kToken = 'tt_token';
   static const _kCookie = 'tt_cookie';
+  static const _kSchoolCookies = 'tt_scoped_cookies_v1';
+  static const _kCasHttpAllowed = 'cas_http_allowed';
   static const _kXh = 'student_id';
   static const _kAutoUpdate = 'auto_update';
   static const _kInterval = 'update_interval';
   static const _kLastSync = 'last_sync';
+  static const _kLessonTimes = 'school_lesson_times_v1';
+  static const _kLoginExpiryNotified = 'login_expiry_notified_v1';
   static const _kLastHeartbeat = 'last_heartbeat';
 
   static late SharedPreferences _sp;
@@ -38,7 +44,25 @@ class Store {
 
   static Future<void> init() async {
     _sp = await SharedPreferences.getInstance();
+    await _sp.reload();
+    try {
+      final raw = _sp.getString(_kLessonTimes);
+      PeriodTime.restore(raw == null ? null :
+          SchoolLessonTimes.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+    } catch (_) {
+      PeriodTime.restore(null);
+    }
   }
+
+  static Future<void> saveLessonTimes(SchoolLessonTimes times) async {
+    if (times.campuses.isEmpty) return;
+    await _sp.setString(_kLessonTimes, jsonEncode(times.toJson()));
+    PeriodTime.restore(times);
+  }
+
+  static bool get loginExpiryNotified => _sp.getBool(_kLoginExpiryNotified) ?? false;
+  static Future<void> markLoginExpiryNotified(bool value) =>
+      _sp.setBool(_kLoginExpiryNotified, value);
 
   // ---------------- 课表 ----------------
   static Schedule get schedule {
@@ -70,8 +94,29 @@ class Store {
   /// 课表网关只认这个 CAS 会话 Cookie（NGXCAS）
   static String get cookie => _sp.getString(_kCookie) ?? '';
   static Future<void> saveCookie(String c) => _sp.setString(_kCookie, c);
-  static Future<void> clearCookie() => _sp.remove(_kCookie);
+  static Future<void> clearCookie() async {
+    await _sp.remove(_kCookie);
+    await _sp.remove(_kSchoolCookies);
+  }
   static bool get hasCookie => cookie.isNotEmpty;
+
+  static SchoolCookies get schoolCookies {
+    try {
+      return SchoolCookies.fromJson(jsonDecode(_sp.getString(_kSchoolCookies) ?? '[]'));
+    } catch (_) { return SchoolCookies(); }
+  }
+
+  static bool get hasSchoolSession =>
+      hasCookie || schoolCookies.hasCas || schoolCookies.hasGateway;
+
+  static Future<void> saveSchoolCookies(SchoolCookies jar) async {
+    await _sp.setString(_kSchoolCookies, jsonEncode(jar.toJson()));
+    await saveCookie(jar.headerFor(schoolTokenUri));
+  }
+
+  static bool get casHttpAllowed => _sp.getBool(_kCasHttpAllowed) ?? false;
+  static Future<void> saveCasHttpAllowed(bool allowed) =>
+      _sp.setBool(_kCasHttpAllowed, allowed);
 
   static String get studentId => _sp.getString(_kXh) ?? '';
   static Future<void> saveStudentId(String id) => _sp.setString(_kXh, id);
@@ -111,8 +156,10 @@ class Store {
     return v == null ? null : DateTime.tryParse(v);
   }
 
-  static Future<void> saveLastSync() =>
-      _sp.setString(_kLastSync, DateTime.now().toIso8601String());
+  static Future<void> saveLastSync() async {
+    await _sp.setString(_kLastSync, DateTime.now().toIso8601String());
+    await markLoginExpiryNotified(false);
+  }
 
   /// 上次心跳保活时间（每次后台唤醒都更新，用于判断保活任务是否存活）
   static DateTime? get lastHeartbeat {

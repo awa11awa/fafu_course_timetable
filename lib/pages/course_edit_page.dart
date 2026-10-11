@@ -72,6 +72,7 @@ class _CourseEditPageState extends State<CourseEditPage> {
     final periods = _periods.toList()..sort();
     final course = Course(
       name: name,
+      campusCode: widget.course?.campusCode ?? '',
       teacher: _teacherCtrl.text.trim(),
       place: _placeCtrl.text.trim(),
       weekday: _weekday,

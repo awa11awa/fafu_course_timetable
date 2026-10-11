@@ -1,0 +1,112 @@
+name: Publish v3.1.0 release
+
+on:
+  push:
+    branches: [codex/v3.1.0-release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fafu-v3.1.0-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/codex/v3.1.0-release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore binary files
+        run: |
+          find . -name '*.b64' | while read -r f; do
+            base64 -d "$f" > "${f%.b64}"
+            rm "$f"
+          done
+          chmod +x android/gradlew
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: true
+      - name: Install locked dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Analyze changed code
+        run: >-
+          flutter analyze
+          lib/main.dart lib/theme.dart lib/models
+          lib/services/scoped_session.dart lib/services/web_session_cookies.dart
+          lib/services/store.dart lib/services/sync_service.dart
+          lib/services/timetable_api.dart lib/services/background_service.dart
+          lib/services/reminder_planner.dart lib/services/school_clock.dart
+          lib/services/notification_service.dart lib/pages/settings_page.dart
+          lib/pages/web_login_page.dart lib/pages/course_edit_page.dart
+          lib/widgets/cas_consent.dart test
+      - name: Test session recovery, course times and notifications
+        run: flutter test
+      - name: Build formal release APK
+        run: flutter build apk --release
+      - name: Verify APK, reminder receivers, versions and matching source
+        run: |
+          git diff --exit-code -- pubspec.lock
+          python3 tools/package_release.py \
+            --apk build/app/outputs/flutter-apk/app-release.apk --output dist
+      - name: Preserve complete release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fafu-v3.1.0-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fafu-v3.1.0-release
+          path: dist
+      - name: Check release files
+        working-directory: dist
+        run: |
+          sha256sum --check SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          info = json.loads(Path('BUILD_INFO.json').read_text())
+          assert info['source_commit'] == os.environ['GITHUB_SHA']
+          assert info['version'] == '3.1.0'
+          assert info['application_id'] == 'cn.fafu.fafu_kebiao'
+          PY
+      - name: Wait for verified source on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 120); do
+            main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+            if [ "$main_sha" = "$GITHUB_SHA" ]; then exit 0; fi
+            sleep 5
+          done
+          echo 'Verified release source must be promoted to main before publication.'
+          exit 1
+      - name: Publish formal release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v3.1.0 \
+            dist/FAFU-v3.1.0.apk dist/fafu_course_timetable-v3.1.0-source.zip \
+            dist/BUILD_INFO.json dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title 'FAFU课程表 v3.1.0' --notes-file dist/RELEASE_NOTES.md \
+            --draft --latest
+          gh release edit v3.1.0 --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest

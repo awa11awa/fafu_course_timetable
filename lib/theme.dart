@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+export 'models/lesson_time.dart';
+
 /// 蓝白纯色设计规范
 class AppColors {
   static const Color primary = Color(0xFF1565C0); // 主蓝
@@ -17,20 +19,6 @@ class AppColors {
   static const Color divider = Color(0xFFE7EEF7); // 分割线
   static const Color success = Color(0xFF2E9E6B);
   static const Color warn = Color(0xFFE08A2E);
-}
-
-/// 上课节次对应的默认作息时间（若与学校实际作息不符，改这里即可）
-class PeriodTime {
-  static const Map<int, String> start = {
-    1: '08:00', 2: '08:55', 3: '10:05', 4: '11:00', 5: '11:55',
-    6: '14:00', 7: '14:55', 8: '16:05', 9: '17:00',
-    10: '19:00', 11: '19:55', 12: '20:50',
-  };
-  static const Map<int, String> end = {
-    1: '08:45', 2: '09:40', 3: '10:50', 4: '11:45', 5: '12:40',
-    6: '14:45', 7: '15:40', 8: '16:50', 9: '17:45',
-    10: '19:45', 11: '20:40', 12: '21:35',
-  };
 }
 
 ThemeData buildAppTheme() {
